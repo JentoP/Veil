@@ -582,31 +582,42 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
     )
 
-    /** Opens the item straight into Nuvio's stream picker, the same way Nuvio's own Watch Next cards do. */
+    /**
+     * Opens the item in Plezy, through its published `plezy://` link grammar
+     * (plezy's lib/services/deep_links/deep_link.dart, which promises parameters
+     * are only ever added, never renamed). A catalogue link names the title by one
+     * external id, so Plezy finds it on whichever of your servers has it.
+     *
+     * A show link carries no season or episode: the grammar has no room for them,
+     * so Plezy plays the episode it is on itself (`mode=next`, the default). That
+     * is your Plex server's progress, which can differ from the Trakt progress
+     * this row is built from.
+     */
     fun open(item: WatchItem) {
-        val i = Intent(Intent.ACTION_MAIN)
-            .setClassName(NUVIO, "$NUVIO.MainActivity")
+        val i = Intent(Intent.ACTION_VIEW, plezyLink(item))
+            .setPackage(PLEZY)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        val imdb = item.imdb
-        if (imdb != null) {
-            i.putExtra("contentId", imdb)
-            i.putExtra("contentType", if (item.isMovie) "movie" else "series")
-            i.putExtra("launchMode", "stream")
-            i.putExtra("videoId", if (item.isMovie) imdb else "$imdb:${item.season}:${item.episode}")
-            i.putExtra("name", item.title)
-            if (!item.isMovie) {
-                i.putExtra("season", item.season)
-                i.putExtra("episode", item.episode)
-                item.episodeTitle?.let { i.putExtra("episodeTitle", it) }
-            }
-            item.poster?.let { i.putExtra("poster", it) }
-            item.thumb?.let { i.putExtra("backdrop", it) }
-            item.logo?.let { i.putExtra("logo", it) }
-        }
         if (!start(i)) {
-            context.packageManager.getLeanbackLaunchIntentForPackage(NUVIO)?.let {
+            context.packageManager.getLeanbackLaunchIntentForPackage(PLEZY)?.let {
                 start(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
+        }
+    }
+
+    /**
+     * `plezy://play?type=movie|show&tmdb=…` for [item], falling back to the IMDB id,
+     * and to `plezy://open` when Trakt gave us neither (Plezy rejects a play link
+     * with no target, so sending one would do nothing at all).
+     */
+    private fun plezyLink(item: WatchItem): Uri {
+        val play = Uri.Builder().scheme(PLEZY_SCHEME).authority("play")
+            .appendQueryParameter("type", if (item.isMovie) "movie" else "show")
+        val tmdb = item.tmdb
+        val imdb = item.imdb?.trim()?.lowercase()
+        return when {
+            tmdb != null && tmdb > 0 -> play.appendQueryParameter("tmdb", tmdb.toString()).build()
+            imdb != null && IMDB_ID.matches(imdb) -> play.appendQueryParameter("imdb", imdb).build()
+            else -> Uri.Builder().scheme(PLEZY_SCHEME).authority("open").build()
         }
     }
 
@@ -619,11 +630,20 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
     }
 
     companion object {
-        const val NUVIO = "com.nuvio.tv"
+        const val PLEZY = "com.edde746.plezy"
+        private const val PLEZY_SCHEME = "plezy"
+
+        /** Plezy accepts an IMDB id only in Trakt's own form: "tt" followed by digits. */
+        private val IMDB_ID = Regex("""^tt\d+$""")
+
         val DEFAULT_PINS = listOf(
             "io.gh.reisxd.tizentube.cobalt",
-            NUVIO,
-            "com.spotify.tv.android",
+            // Plezy covers both halves: video, and the music library that feeds the now-playing
+            // pill, the lyrics face and the visualizer. Don't add YouTube Music's TV app here:
+            // it requests no FOREGROUND_SERVICE and declares no playback service, so it stops
+            // the moment it leaves the foreground and never publishes a MediaSession for
+            // NowPlaying to read.
+            PLEZY,
         )
     }
 }

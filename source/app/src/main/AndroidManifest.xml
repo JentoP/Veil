@@ -28,7 +28,7 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />
         </intent>
-        <package android:name="com.nuvio.tv" />
+        <package android:name="com.edde746.plezy" />
     </queries>
 
     <application

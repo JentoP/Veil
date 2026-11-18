@@ -299,12 +299,12 @@ private fun ContinueRow(state: LauncherState, firstFocus: FocusRequester, focusK
         ) {
             when {
                 !state.connected -> item {
-                    MessagePill("Connect Trakt", "Show what you're watching in Nuvio", state::startConnect, Modifier.focusRequester(firstFocus))
+                    MessagePill("Connect Trakt", "Show what you're watching in Plezy", state::startConnect, Modifier.focusRequester(firstFocus))
                 }
                 state.items.isEmpty() -> item {
                     MessagePill(
                         if (state.loading) "Loading…" else (state.error ?: "Nothing in progress"),
-                        if (state.loading) "Fetching from Trakt" else "Start something in Nuvio",
+                        if (state.loading) "Fetching from Trakt" else "Start something in Plezy",
                         { state.refreshWatching(force = true) },
                         Modifier.focusRequester(firstFocus),
                     )
