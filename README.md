@@ -80,8 +80,9 @@ A TV can't ask for these with a pop-up, so they're granted over ADB (the install
   - **Trakt, Simkl, MDBList or WeTrakr** (only the one you connect): reads your watch progress with your own login
     and, only when you ask, marks items watched or removes them from Continue Watching (clears paused
     progress; for shows, Trakt hides it from progress, Simkl moves it to "On hold", MDBList marks it
-    dropped, WeTrakr puts it on hold, all undoable on the service). Simkl, MDBList and WeTrakr are only asked again when their "last
-    activity" changed, to stay well within their limits.
+    dropped, WeTrakr puts it on hold, all undoable on the service). Veil checks the service's "last activity" at
+    most once a minute and only fetches the part that changed (plus a refresh every few hours for new
+    airings), as the services' sync guides ask.
   - **Open-Meteo**: your chosen city, for the weather.
   - **LRCLIB**: the song currently playing (title, artist, album, length), to get lyrics.
   - **NextDNS API**: your blocked-tracker stats, if set up.

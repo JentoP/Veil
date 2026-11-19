@@ -83,7 +83,7 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
         private set
     var deviceCode by mutableStateOf<DeviceCode?>(null)
         private set
-    /** Connect screen step 1: pick Trakt, Simkl or MDBList. Step 2 is the sign-in code. */
+    /** Connect screen step 1: pick Trakt, Simkl, MDBList or WeTrakr. Step 2 is the sign-in code. */
     var pickingService by mutableStateOf(true)
         private set
     var connectStatus by mutableStateOf("")
@@ -230,7 +230,7 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
             loading = true
             try {
                 val source = tracker
-                val result = withContext(Dispatchers.IO) { ContinueWatching.withArt(source.continueWatching(), tmdb) }
+                val result = withContext(Dispatchers.IO) { ContinueWatching.withArt(source.continueWatching(force), tmdb) }
                 if (source !== tracker) return@launch // switched service while loading
                 items = result
                 VeilCache.items = result
@@ -576,7 +576,7 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
             ?.let { start(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     }
 
-    // ---- Tracker sign-in (Trakt, Simkl or MDBList) ---------------------------------------------
+    // ---- Tracker sign-in (Trakt, Simkl, MDBList, WeTrakr) ----------------------------------------
 
     /** Opens the Connect screen on the service picker. */
     fun startConnect() {

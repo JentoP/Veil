@@ -64,7 +64,8 @@ class Trakt(context: Context) : Tracker {
         )
     }
 
-    override suspend fun continueWatching(): List<WatchItem> = ContinueWatching.load(this)
+    private val sync = SyncCache(context, "trakt")
+    override suspend fun continueWatching(force: Boolean): List<WatchItem> = ContinueWatching.load(this, sync, force)
 
     override fun pollDeviceToken(dc: DeviceCode): Poll {
         val (code, text) = Http.call(
@@ -82,7 +83,7 @@ class Trakt(context: Context) : Tracker {
         }
     }
 
-    override fun disconnect() = prefs.edit().clear().apply()
+    override fun disconnect() { prefs.edit().clear().apply(); sync.clear() }
 
     private fun saveTokens(j: JSONObject) {
         val created = j.optLong("created_at", System.currentTimeMillis() / 1000)
@@ -162,6 +163,7 @@ class Trakt(context: Context) : Tracker {
         }
         val ok = send("POST", "/sync/history", body) in 200..299
         if (ok) item.playbackId?.let { send("DELETE", "/sync/playback/$it") }
+        sync.invalidate()
         return ok
     }
 
@@ -177,6 +179,7 @@ class Trakt(context: Context) : Tracker {
             val body = JSONObject().put("shows", org.json.JSONArray().put(JSONObject().put("ids", JSONObject().put("trakt", show))))
             ok = ok && send("POST", "/users/hidden/progress_watched", body) in 200..299
         }
+        sync.invalidate()
         return ok
     }
 

@@ -18,13 +18,13 @@ class MdbList(context: Context) : Tracker {
         deviceUrl = "$API/oauth/device-authorization/", tokenUrl = "$API/oauth/token/",
         scope = "write",
     )
-    private val cache = context.getSharedPreferences("mdblist_cache", Context.MODE_PRIVATE)
+    private val sync = SyncCache(context, "mdblist")
 
     override val hasKeys get() = auth.hasKeys
     override val isConnected get() = auth.isConnected
     override fun requestDeviceCode() = auth.requestDeviceCode()
     override fun pollDeviceToken(dc: DeviceCode) = auth.pollDeviceToken(dc)
-    override fun disconnect() { auth.disconnect(); cache.edit().clear().apply() }
+    override fun disconnect() { auth.disconnect(); sync.clear() }
 
     private fun headers() = mapOf("Authorization" to "Bearer ${auth.accessToken}")
 
@@ -41,24 +41,18 @@ class MdbList(context: Context) : Tracker {
         return text
     }
 
-    override suspend fun continueWatching(): List<WatchItem> {
-        val now = System.currentTimeMillis()
-        var playback = cache.getString("playback", null)
-        var upnext = cache.getString("upnext", null)
-        // At most one check a minute, however often Home is opened.
-        if (playback == null || now - cache.getLong("checked", 0) > 60_000) {
-            val a = JSONObject(get("/sync/last_activities"))
-            val stamp = listOf("watched_at", "episode_watched_at", "paused_at", "episode_paused_at", "dropped_at")
-                .joinToString("|") { a.str(it).orEmpty() }
-            val fresh = now - cache.getLong("at", 0) < MAX_CACHE_AGE
-            if (stamp != cache.getString("stamp", null) || !fresh || playback == null) {
-                playback = get("/sync/playback")
-                upnext = get("/upnext?limit=20&hide_unreleased=true&air_date_format=instant")
-                cache.edit().putString("stamp", stamp).putLong("at", now)
-                    .putString("playback", playback).putString("upnext", upnext).apply()
-            }
-            cache.edit().putLong("checked", now).apply()
-        }
+    override suspend fun continueWatching(force: Boolean): List<WatchItem> {
+        sync.sync(force, { JSONObject(get("/sync/last_activities")) }, listOf(
+            SyncCache.Part("playback", 24 * SyncCache.HOUR, {
+                SyncCache.stamps(it, "paused_at", "episode_paused_at", "watched_at", "episode_watched_at")
+            }) { get("/sync/playback") },
+            // hide_unreleased: Up Next only has aired episodes, so new airings need the max age.
+            SyncCache.Part("upnext", 3 * SyncCache.HOUR, {
+                SyncCache.stamps(it, "watched_at", "episode_watched_at", "dropped_at")
+            }) { get("/upnext?limit=20&hide_unreleased=true&air_date_format=instant") },
+        ))
+        val playback = sync.get("playback")
+        val upnext = sync.get("upnext")
         val paused = parsePlayback(playback)
         val pausedShows = paused.filter { !it.isMovie }.mapNotNull { it.tmdb }.toSet()
         val next = parseUpNext(upnext).filter { it.tmdb == null || it.tmdb !in pausedShows }
@@ -181,10 +175,9 @@ class MdbList(context: Context) : Tracker {
         return done
     }
 
-    private fun invalidate() = cache.edit().remove("stamp").putLong("checked", 0).apply()
+    private fun invalidate() = sync.invalidate()
 
     companion object {
         const val API = "https://api.mdblist.com"
-        private const val MAX_CACHE_AGE = 3 * 3600_000L
     }
 }

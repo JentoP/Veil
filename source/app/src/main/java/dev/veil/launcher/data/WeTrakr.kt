@@ -12,18 +12,18 @@ import java.io.IOException
  * code, refresh at /oauth/token/refresh), so it has its own sign-in instead of [DeviceAuth].
  *
  * Continue Watching = the "playing" list (movies and episodes left halfway) plus the "watching" shows with
- * their next episode. Those are only fetched again when /sync/last_activities moved (or every few hours,
- * for new airings): every request also needs the app key, and the API counts requests per day.
+ * their next episode, each fetched again only when its stamps in /sync/last_activities moved, as WeTrakr's
+ * sync guide asks (see [SyncCache]).
  */
 class WeTrakr(context: Context) : Tracker {
     override val service = Service.WETRAKR
     private val clientId = BuildConfig.WETRAKR_CLIENT_ID
     private val prefs = context.getSharedPreferences("auth_WeTrakr", Context.MODE_PRIVATE)
-    private val cache = context.getSharedPreferences("wetrakr_cache", Context.MODE_PRIVATE)
+    private val sync = SyncCache(context, "wetrakr")
 
     override val hasKeys get() = clientId.isNotBlank()
     override val isConnected get() = prefs.getString("access", null) != null
-    override fun disconnect() { prefs.edit().clear().apply(); cache.edit().clear().apply() }
+    override fun disconnect() { prefs.edit().clear().apply(); sync.clear() }
 
     private fun headers(token: Boolean) = buildMap {
         put("wetrakr-api-key", clientId)
@@ -103,24 +103,27 @@ class WeTrakr(context: Context) : Tracker {
 
     // ---- Continue Watching ----
 
-    override suspend fun continueWatching(): List<WatchItem> {
-        val now = System.currentTimeMillis()
-        var movies = cache.getString("movies", null)
-        var episodes = cache.getString("episodes", null)
-        var watching = cache.getString("watching", null)
-        // At most one check a minute, however often Home is opened.
-        if (watching == null || now - cache.getLong("checked", 0) > 60_000) {
-            val stamp = JSONObject(get("/sync/last_activities")).str("all").orEmpty()
-            val fresh = now - cache.getLong("at", 0) < MAX_CACHE_AGE
-            if (stamp != cache.getString("stamp", null) || !fresh || watching == null) {
-                movies = get("/sync/tracking/playing/movies?limit=20")
-                episodes = get("/sync/tracking/playing/episodes?limit=20")
-                watching = get("/sync/tracking/watching/shows?limit=30&sort_by=my_last_watched&extended=episode_level_1,interactions")
-                cache.edit().putString("stamp", stamp).putLong("at", now)
-                    .putString("movies", movies).putString("episodes", episodes).putString("watching", watching).apply()
-            }
-            cache.edit().putLong("checked", now).apply()
-        }
+    override suspend fun continueWatching(force: Boolean): List<WatchItem> {
+        sync.sync(force, { JSONObject(get("/sync/last_activities")) }, listOf(
+            SyncCache.Part("movies", 24 * SyncCache.HOUR, { SyncCache.stamps(it, "movies.last_playback_at") }) {
+                get("/sync/tracking/playing/movies?limit=20")
+            },
+            SyncCache.Part("episodes", 24 * SyncCache.HOUR, { SyncCache.stamps(it, "episodes.last_playback_at") }) {
+                get("/sync/tracking/playing/episodes?limit=20")
+            },
+            SyncCache.Part("watching", WATCHING_MAX_AGE, {
+                SyncCache.stamps(
+                    it, "shows.last_tracking_watching_at", "shows.last_tracking_hold_at", "shows.last_tracking_dropped_at",
+                    "shows.last_tracking_watched_at", "shows.last_tracking_removed_at", "episodes.last_tracking_watched_at",
+                    "episodes.last_tracking_removed_at", "episodes.last_tracking_ignored_at",
+                )
+            }) {
+                get("/sync/tracking/watching/shows?limit=30&sort_by=my_last_watched&extended=episode_level_1,interactions")
+            },
+        ))
+        val movies = sync.get("movies")
+        val episodes = sync.get("episodes")
+        val watching = sync.get("watching")
         val paused = parsePlaying(movies, isMovie = true) + parsePlaying(episodes, isMovie = false)
         val pausedShows = paused.filter { !it.isMovie }.mapNotNull { it.serviceId }.toSet()
         val next = parseWatching(watching).filter { it.serviceId !in pausedShows }
@@ -163,7 +166,7 @@ class WeTrakr(context: Context) : Tracker {
             val season = next.int("season_number") ?: continue
             val episode = next.int("number") ?: continue
             val aired = ContinueWatching.time(next.str("air_datetime") ?: next.str("air_date"))
-            if (next.optBoolean("is_upcoming") || aired == 0L || aired > now) continue
+            if (aired == 0L || aired > now) continue // not aired yet: kept, and shown once it airs
             val last = j.obj("interactions")?.obj("user")?.obj("tracking")?.obj("last")
             val lastWatched = ContinueWatching.time(last?.str("last_watched_at") ?: last?.str("tracked_at") ?: j.str("tracked_at"))
             val isNew = aired in (lastWatched + 1)..now && now - aired < ContinueWatching.NEW_WINDOW_MS
@@ -252,10 +255,14 @@ class WeTrakr(context: Context) : Tracker {
         return done
     }
 
-    private fun invalidate() = cache.edit().remove("stamp").putLong("checked", 0).apply()
+    private fun invalidate() = sync.invalidate()
 
     companion object {
         const val API = "https://api.wetrakr.com"
-        private const val MAX_CACHE_AGE = 3 * 3600_000L
+        /**
+         * Next episodes that haven't aired yet are kept and shown once they air. Not yet confirmed that WeTrakr
+         * sends them (it may only send aired ones), so new airings are also picked up every 6 hours.
+         */
+        private const val WATCHING_MAX_AGE = 6 * SyncCache.HOUR
     }
 }

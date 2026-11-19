@@ -300,7 +300,7 @@ private fun ContinueRow(state: LauncherState, focusKey: (String) -> FocusRequest
         ) {
             when {
                 !state.connected -> item {
-                    MessagePill("Connect a tracker", "Trakt, Simkl or MDBList: show what you're watching", state::startConnect)
+                    MessagePill("Connect a tracker", "Trakt, Simkl, MDBList or WeTrakr: show what you're watching", state::startConnect)
                 }
                 state.items.isEmpty() -> item {
                     MessagePill(

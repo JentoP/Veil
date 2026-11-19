@@ -19,13 +19,13 @@ class Simkl(context: Context) : Tracker {
         deviceUrl = "$API/oauth2/device", tokenUrl = "$API/oauth2/token",
         scope = "media:read media:write",
     )
-    private val cache = context.getSharedPreferences("simkl_cache", Context.MODE_PRIVATE)
+    private val sync = SyncCache(context, "simkl")
 
     override val hasKeys get() = auth.hasKeys
     override val isConnected get() = auth.isConnected
     override fun requestDeviceCode() = auth.requestDeviceCode()
     override fun pollDeviceToken(dc: DeviceCode) = auth.pollDeviceToken(dc)
-    override fun disconnect() { auth.disconnect(); cache.edit().clear().apply() }
+    override fun disconnect() { auth.disconnect(); sync.clear() }
 
     /** client_id, app-name and app-version go on every Simkl request. */
     private fun url(path: String): String {
@@ -52,27 +52,21 @@ class Simkl(context: Context) : Tracker {
         return text
     }
 
-    override suspend fun continueWatching(): List<WatchItem> {
-        val activities = JSONObject(get("/sync/activities"))
-        // Only what this row shows: paused playback and the "watching" lists.
-        val stamp = listOf(
-            activities.obj("tv_shows")?.str("playback"), activities.obj("tv_shows")?.str("watching"),
-            activities.obj("tv_shows")?.str("all"), activities.obj("anime")?.str("all"),
-            activities.obj("movies")?.str("playback"),
-        ).joinToString("|")
-        val fresh = System.currentTimeMillis() - cache.getLong("at", 0) < MAX_CACHE_AGE
-        var playback = cache.getString("playback", null)
-        var shows = cache.getString("shows", null)
-        var anime = cache.getString("anime", null)
-        if (stamp != cache.getString("stamp", null) || !fresh || playback == null) {
-            playback = get("/sync/playback")
-            shows = get("/sync/all-items/shows/watching?next_watch_info=yes")
-            anime = runCatching { get("/sync/all-items/anime/watching?next_watch_info=yes") }.getOrNull()
-            cache.edit()
-                .putString("stamp", stamp).putLong("at", System.currentTimeMillis())
-                .putString("playback", playback).putString("shows", shows).putString("anime", anime)
-                .apply()
-        }
+    override suspend fun continueWatching(force: Boolean): List<WatchItem> {
+        sync.sync(force, { JSONObject(get("/sync/activities")) }, listOf(
+            SyncCache.Part("playback", 24 * SyncCache.HOUR, {
+                SyncCache.stamps(it, "tv_shows.playback", "anime.playback", "movies.playback")
+            }) { get("/sync/playback") },
+            SyncCache.Part("shows", 6 * SyncCache.HOUR, { SyncCache.stamps(it, "tv_shows.all") }) {
+                get("/sync/all-items/shows/watching?next_watch_info=yes")
+            },
+            SyncCache.Part("anime", 6 * SyncCache.HOUR, { SyncCache.stamps(it, "anime.all") }) {
+                runCatching { get("/sync/all-items/anime/watching?next_watch_info=yes") }.getOrDefault("")
+            },
+        ))
+        val playback = sync.get("playback")
+        val shows = sync.get("shows")
+        val anime = sync.get("anime")
         val paused = parsePlayback(arrayOf(playback))
         val pausedShows = paused.filter { !it.isMovie }.mapNotNull { it.serviceId }.toSet()
         val upNext = parseWatching(shows, "shows") + parseWatching(anime, "anime")
@@ -168,7 +162,7 @@ class Simkl(context: Context) : Tracker {
         }
         val done = ok(call("POST", "/sync/history", body).first)
         if (done) item.playbackId?.let { call("DELETE", "/sync/playback/$it") }
-        cache.edit().remove("stamp").apply()
+        sync.invalidate()
         return done
     }
 
@@ -180,13 +174,12 @@ class Simkl(context: Context) : Tracker {
             val body = JSONObject().put("shows", JSONArray().put(JSONObject().put("to", "hold").put("ids", ids(item))))
             done = done && ok(call("POST", "/sync/add-to-list", body).first)
         }
-        cache.edit().remove("stamp").apply()
+        sync.invalidate()
         return done
     }
 
     companion object {
         const val API = "https://api.simkl.com"
         /** Refetch at least this often anyway, so newly aired episodes show up. */
-        private const val MAX_CACHE_AGE = 6 * 3600_000L
     }
 }

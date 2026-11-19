@@ -33,9 +33,28 @@ object ContinueWatching {
         }.awaitAll()
     }
 
-    suspend fun load(trakt: Trakt): List<WatchItem> = coroutineScope {
-        val playback = parsePlayback(JSONArray(trakt.get("/sync/playback?limit=30&extended=full")))
-        val pausedShows = playback.filter { !it.isMovie }.mapNotNull { it.traktId }.toSet()
+    /**
+     * Trakt: paused items (/sync/playback) and up next (built from history + one progress call per show), each
+     * fetched again only when /sync/last_activities moved for it (see [SyncCache]). Trakt's next episode is
+     * always an aired one, so up next is also refreshed every few hours to pick up new airings.
+     */
+    internal suspend fun load(trakt: Trakt, sync: SyncCache, force: Boolean): List<WatchItem> {
+        sync.sync(force, { JSONObject(trakt.get("/sync/last_activities")) }, listOf(
+            SyncCache.Part("playback", 24 * SyncCache.HOUR, {
+                SyncCache.stamps(it, "movies.paused_at", "episodes.paused_at", "movies.watched_at", "episodes.watched_at")
+            }) { trakt.get("/sync/playback?limit=30&extended=full") },
+            SyncCache.Part("upnext", 3 * SyncCache.HOUR, {
+                SyncCache.stamps(it, "episodes.watched_at", "shows.hidden_at", "seasons.hidden_at")
+            }) { SyncCache.encode(upNext(trakt, pausedShows(parsePlayback(sync.get("playback"))))) },
+        ))
+        val playback = parsePlayback(sync.get("playback"))
+        val paused = pausedShows(playback)
+        return merge(playback, SyncCache.decode(sync.get("upnext")).filter { it.traktId !in paused })
+    }
+
+    private fun pausedShows(playback: List<WatchItem>) = playback.filter { !it.isMovie }.mapNotNull { it.traktId }.toSet()
+
+    private suspend fun upNext(trakt: Trakt, pausedShows: Set<Int>): List<WatchItem> = coroutineScope {
         // Shows you removed from Continue Watching (Trakt "hidden from progress") stay out of Up Next.
         val hidden = trakt.hiddenShows()
 
@@ -77,8 +96,7 @@ object ContinueWatching {
                 }.getOrNull()
             }
         }.awaitAll().filterNotNull()
-
-        merge(playback, upNext)
+        upNext
     }
 
     /** Paused items and next episodes together: newest first, one entry per show/movie, at most [MAX_ITEMS]. */
@@ -88,7 +106,8 @@ object ContinueWatching {
             .distinctBy { it.key }
             .take(MAX_ITEMS)
 
-    private fun parsePlayback(arr: JSONArray): List<WatchItem> {
+    private fun parsePlayback(text: String?): List<WatchItem> {
+        val arr = text?.let { runCatching { JSONArray(it) }.getOrNull() } ?: return emptyList()
         val out = ArrayList<WatchItem>()
         for (i in 0 until arr.length()) {
             val j = arr.getJSONObject(i)

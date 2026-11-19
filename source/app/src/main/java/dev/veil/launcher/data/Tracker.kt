@@ -48,8 +48,11 @@ interface Tracker {
     fun requestDeviceCode(): DeviceCode
     fun pollDeviceToken(dc: DeviceCode): Poll
     fun disconnect()
-    /** Paused items and next episodes, newest first, without artwork (see [ContinueWatching.withArt]). */
-    suspend fun continueWatching(): List<WatchItem>
+    /**
+     * Paused items and next episodes, newest first, without artwork (see [ContinueWatching.withArt]).
+     * Follows [SyncCache]'s rules; [force] fetches everything again.
+     */
+    suspend fun continueWatching(force: Boolean = false): List<WatchItem>
     /** Adds the episode/movie to watch history (watched now) and clears its paused progress. */
     fun markWatched(item: WatchItem): Boolean
     /** Takes the item out of Continue Watching on the service itself. */
