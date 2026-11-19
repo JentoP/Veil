@@ -102,15 +102,15 @@ Walk them through getting each key:
 
 - **TMDB_KEY** (required, for artwork): themoviedb.org account → Settings → API → request a key
   (Developer, personal use). Use the **v3 "API Key"**, not the long read-access token.
-- **Trakt, Simkl or MDBList** (for *Continue watching*): **nothing to set up.** Leave the `TRAKT_*`,
-  `SIMKL_CLIENT_ID` and `MDBLIST_CLIENT_ID` lines empty and the build uses Veil's shared apps
-  (`source/trakt.properties`, `simkl.properties`, `mdblist.properties`; public on purpose, TV sign-in apps
+- **Trakt, Simkl, MDBList or WeTrakr** (for *Continue watching*): **nothing to set up.** Leave the `TRAKT_*`,
+  `SIMKL_CLIENT_ID`, `MDBLIST_CLIENT_ID` and `WETRAKR_CLIENT_ID` lines empty and the build uses Veil's shared apps
+  (`source/trakt.properties`, `simkl.properties`, `mdblist.properties`, `wetrakr.properties`; public on purpose, TV sign-in apps
   have no secret). Ask which tracker they use. They sign in later **on the TV**: "Connect a tracker" on Home
-  lets them pick Trakt, Simkl or MDBList and shows a QR code and a short code for their phone. Their account
+  lets them pick Trakt, Simkl, MDBList or WeTrakr and shows a QR code and a short code for their phone. Their account
   never goes into the source. One tracker is connected at a time.
   Continue watching opens items in **Nuvio** or **Stremio** (picked once in the Veil menu, *Play shows
   with*). The player must sync its progress to the same tracker account (Nuvio syncs to Trakt; check the
-  player's settings for Simkl or MDBList).
+  player's settings for Simkl, MDBList or WeTrakr).
   - Only if they want **their own Trakt app**: trakt.tv → Settings → Your API Apps → New application, any
     name, redirect URI `urn:ietf:wg:oauth:2.0:oob`. They can enter its Client ID on the TV (Connect Trakt →
     *Use your own Trakt app*). Veil saves it on the TV and also writes it to
@@ -188,7 +188,7 @@ launcher to "fix" the flash (rule 1).
 
 Guide them through, and confirm each works:
 1. **Home** shows Veil. Press Home inside another app: it comes back to Veil.
-2. **Connect a tracker**: they pick Trakt, Simkl or MDBList, scan the QR code (or enter the code on the
+2. **Connect a tracker**: they pick Trakt, Simkl, MDBList or WeTrakr, scan the QR code (or enter the code on the
    service's site), and Continue watching fills in. Then in the Veil menu, *Play shows with*: Nuvio or
    Stremio, and press a show to check it opens the right episode.
 3. **Artwork and logos** load. If they're missing, the TMDB key is wrong.

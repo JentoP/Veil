@@ -14,6 +14,7 @@ import dev.veil.launcher.data.BadClientId
 import dev.veil.launcher.data.ContinueWatching
 import dev.veil.launcher.data.DeviceCode
 import dev.veil.launcher.data.MdbList
+import dev.veil.launcher.data.WeTrakr
 import dev.veil.launcher.data.Poll
 import dev.veil.launcher.data.Service
 import dev.veil.launcher.data.Simkl
@@ -49,6 +50,7 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
     val trakt = Trakt(context)
     private val simkl = Simkl(context)
     private val mdblist = MdbList(context)
+    private val wetrakr = WeTrakr(context)
     private val tmdb = Tmdb(BuildConfig.TMDB_KEY)
     private val prefs = context.getSharedPreferences("veil", Context.MODE_PRIVATE)
 
@@ -60,6 +62,7 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
         Service.TRAKT -> trakt
         Service.SIMKL -> simkl
         Service.MDBLIST -> mdblist
+        Service.WETRAKR -> wetrakr
     }
     /** Whether a service has a client ID in this build (otherwise it's shown as not available). */
     fun available(s: Service) = trackerFor(s).hasKeys || s == Service.TRAKT

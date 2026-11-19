@@ -7,6 +7,7 @@ enum class Service(val id: String, val title: String, val blurb: String) {
     TRAKT("trakt", "Trakt", "The most widely used tracker. Nuvio syncs to it."),
     SIMKL("simkl", "Simkl", "Tracks TV, anime and movies, with a free API."),
     MDBLIST("mdblist", "MDBList", "Lists, ratings and Up Next, popular with Stremio users."),
+    WETRAKR("wetrakr", "WeTrakr", "A newer tracker for movies, shows and anime, with a social side."),
     ;
 
     companion object {
@@ -20,6 +21,7 @@ fun currentTracker(context: android.content.Context): Tracker =
         Service.TRAKT -> Trakt(context)
         Service.SIMKL -> Simkl(context)
         Service.MDBLIST -> MdbList(context)
+        Service.WETRAKR -> WeTrakr(context)
     }
 
 /** A device-code sign-in in progress: show [userCode] and [url], or the QR of [qrUrl] (code filled in). */
