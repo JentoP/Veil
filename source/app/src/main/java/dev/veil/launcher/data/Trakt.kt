@@ -6,7 +6,8 @@ import org.json.JSONObject
 import java.io.IOException
 
 /** Trakt client using the TV-friendly device-code sign in. Tokens stay in app-private storage. */
-class Trakt(context: Context) {
+class Trakt(context: Context) : Tracker {
+    override val service = Service.TRAKT
     private val app = context.applicationContext
     private val prefs = context.getSharedPreferences("trakt", Context.MODE_PRIVATE)
     /** A client ID typed in on the TV. Kept apart from [prefs] so signing out doesn't forget it. */
@@ -24,7 +25,7 @@ class Trakt(context: Context) {
         get() = if (usingOwnId) OOB else BuildConfig.TRAKT_REDIRECT_URI.ifBlank { OOB }
 
     /** Only the client ID is required. Newer Trakt apps (PKCE, since Oct 2026) don't get a secret. */
-    val hasKeys: Boolean get() = clientId.isNotBlank()
+    override val hasKeys: Boolean get() = clientId.isNotBlank()
 
     /**
      * Uses your own Trakt app (null or blank: back to the built-in one). Signs out, since a login belongs to
@@ -41,39 +42,32 @@ class Trakt(context: Context) {
         }
     }
 
-    /** Thrown when Trakt rejects the client ID (wrong or deleted Trakt app). */
-    class BadClientId : IOException("Trakt rejected the client ID")
-
     /** Adds client_secret only for older Trakt apps that have one; secret-less apps must omit it. */
     private fun JSONObject.withSecret(): JSONObject = apply { if (secret.isNotBlank()) put("client_secret", secret) }
-    val isConnected: Boolean get() = prefs.getString("access", null) != null
+    override val isConnected: Boolean get() = prefs.getString("access", null) != null
 
-    data class DeviceCode(
-        val deviceCode: String,
-        val userCode: String,
-        val url: String,
-        val interval: Int,
-        val expiresIn: Int,
-    )
-
-    enum class Poll { AUTHORIZED, PENDING, SLOW_DOWN, FAILED }
-
-    fun requestDeviceCode(): DeviceCode {
+    override fun requestDeviceCode(): DeviceCode {
         val (code, text) = Http.call(
             "POST", "$API/oauth/device/code",
             body = JSONObject().put("client_id", clientId).toString(),
         )
-        if (code == 401 || code == 403) throw BadClientId()
+        if (code == 401 || code == 403) throw BadClientId("Trakt")
         if (code != 200) throw IOException("Trakt returned $code")
         val j = JSONObject(text)
+        val url = j.optString("verification_url", "https://trakt.tv/activate")
+        val userCode = j.getString("user_code")
         return DeviceCode(
-            j.getString("device_code"), j.getString("user_code"),
-            j.optString("verification_url", "https://trakt.tv/activate"),
-            j.optInt("interval", 5), j.optInt("expires_in", 600),
+            j.getString("device_code"), userCode, url,
+            // Trakt's activate page takes the code as a path segment.
+            qrUrl = "${url.trimEnd('/')}/$userCode",
+            interval = j.optInt("interval", 5), expiresIn = j.optInt("expires_in", 600),
         )
     }
 
-    fun pollDeviceToken(dc: DeviceCode): Poll {
+    private val sync = SyncCache(context, "trakt")
+    override suspend fun continueWatching(force: Boolean): List<WatchItem> = ContinueWatching.load(this, sync, force)
+
+    override fun pollDeviceToken(dc: DeviceCode): Poll {
         val (code, text) = Http.call(
             "POST", "$API/oauth/device/token",
             body = JSONObject()
@@ -89,7 +83,7 @@ class Trakt(context: Context) {
         }
     }
 
-    fun disconnect() = prefs.edit().clear().apply()
+    override fun disconnect() { prefs.edit().clear().apply(); sync.clear() }
 
     private fun saveTokens(j: JSONObject) {
         val created = j.optLong("created_at", System.currentTimeMillis() / 1000)
@@ -146,7 +140,7 @@ class Trakt(context: Context) {
     // ---- Writes used by the Continue Watching hold menu ----
 
     /** Adds the episode/movie to your Trakt watch history (watched now) and clears its paused progress. */
-    fun markWatched(item: WatchItem): Boolean {
+    override fun markWatched(item: WatchItem): Boolean {
         val now = java.time.Instant.now().toString() // watched right now
         val body = if (item.isMovie) {
             val id = item.traktId ?: return false
@@ -169,6 +163,7 @@ class Trakt(context: Context) {
         }
         val ok = send("POST", "/sync/history", body) in 200..299
         if (ok) item.playbackId?.let { send("DELETE", "/sync/playback/$it") }
+        sync.invalidate()
         return ok
     }
 
@@ -176,7 +171,7 @@ class Trakt(context: Context) {
      * Takes the item out of Continue Watching on Trakt: clears paused progress, and for shows also uses
      * Trakt's "hide from progress" (undo on trakt.tv under Hidden items).
      */
-    fun removeFromProgress(item: WatchItem): Boolean {
+    override fun removeFromProgress(item: WatchItem): Boolean {
         var ok = true
         item.playbackId?.let { ok = send("DELETE", "/sync/playback/$it") in 200..299 || it == 0L }
         if (!item.isMovie) {
@@ -184,6 +179,7 @@ class Trakt(context: Context) {
             val body = JSONObject().put("shows", org.json.JSONArray().put(JSONObject().put("ids", JSONObject().put("trakt", show))))
             ok = ok && send("POST", "/users/hidden/progress_watched", body) in 200..299
         }
+        sync.invalidate()
         return ok
     }
 

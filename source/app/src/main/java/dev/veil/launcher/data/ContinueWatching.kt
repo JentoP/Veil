@@ -16,11 +16,45 @@ object ContinueWatching {
     private const val MAX_ITEMS = 10
     private const val MAX_UP_NEXT_SHOWS = 10
     /** An episode counts as "NEW" for two weeks after it airs (if you haven't watched the show since). */
-    private const val NEW_WINDOW_MS = 14L * 24 * 3600 * 1000
+    internal const val NEW_WINDOW_MS = 14L * 24 * 3600 * 1000
 
-    suspend fun load(trakt: Trakt, tmdb: Tmdb): List<WatchItem> = coroutineScope {
-        val playback = parsePlayback(JSONArray(trakt.get("/sync/playback?limit=30&extended=full")))
-        val pausedShows = playback.filter { !it.isMovie }.mapNotNull { it.traktId }.toSet()
+    /**
+     * Adds TMDB artwork to any tracker's items. Items without a TMDB id (Simkl often sends only IMDb/TVDB
+     * ids) are looked up through TMDB's /find first.
+     */
+    suspend fun withArt(items: List<WatchItem>, tmdb: Tmdb): List<WatchItem> = coroutineScope {
+        items.map { item ->
+            async {
+                val id = item.tmdb ?: runCatching { tmdb.find(item.isMovie, item.imdb, item.tvdb) }.getOrNull()
+                    ?: return@async item
+                val art = runCatching { tmdb.art(item.isMovie, id) }.getOrNull() ?: return@async item.copy(tmdb = id)
+                item.copy(tmdb = id, backdrop = art.backdrop, thumb = art.thumb, logo = art.logo, poster = art.poster)
+            }
+        }.awaitAll()
+    }
+
+    /**
+     * Trakt: paused items (/sync/playback) and up next (built from history + one progress call per show), each
+     * fetched again only when /sync/last_activities moved for it (see [SyncCache]). Trakt's next episode is
+     * always an aired one, so up next is also refreshed every few hours to pick up new airings.
+     */
+    internal suspend fun load(trakt: Trakt, sync: SyncCache, force: Boolean): List<WatchItem> {
+        sync.sync(force, { JSONObject(trakt.get("/sync/last_activities")) }, listOf(
+            SyncCache.Part("playback", 24 * SyncCache.HOUR, {
+                SyncCache.stamps(it, "movies.paused_at", "episodes.paused_at", "movies.watched_at", "episodes.watched_at")
+            }) { trakt.get("/sync/playback?limit=30&extended=full") },
+            SyncCache.Part("upnext", 3 * SyncCache.HOUR, {
+                SyncCache.stamps(it, "episodes.watched_at", "shows.hidden_at", "seasons.hidden_at")
+            }) { SyncCache.encode(upNext(trakt, pausedShows(parsePlayback(sync.get("playback"))))) },
+        ))
+        val playback = parsePlayback(sync.get("playback"))
+        val paused = pausedShows(playback)
+        return merge(playback, SyncCache.decode(sync.get("upnext")).filter { it.traktId !in paused })
+    }
+
+    private fun pausedShows(playback: List<WatchItem>) = playback.filter { !it.isMovie }.mapNotNull { it.traktId }.toSet()
+
+    private suspend fun upNext(trakt: Trakt, pausedShows: Set<Int>): List<WatchItem> = coroutineScope {
         // Shows you removed from Continue Watching (Trakt "hidden from progress") stay out of Up Next.
         val hidden = trakt.hiddenShows()
 
@@ -62,22 +96,18 @@ object ContinueWatching {
                 }.getOrNull()
             }
         }.awaitAll().filterNotNull()
+        upNext
+    }
 
-        val merged = (playback + upNext)
+    /** Paused items and next episodes together: newest first, one entry per show/movie, at most [MAX_ITEMS]. */
+    fun merge(playback: List<WatchItem>, upNext: List<WatchItem>): List<WatchItem> =
+        (playback + upNext)
             .sortedByDescending { it.sortTime }
             .distinctBy { it.key }
             .take(MAX_ITEMS)
 
-        merged.map { item ->
-            async {
-                val id = item.tmdb ?: return@async item
-                val art = runCatching { tmdb.art(item.isMovie, id) }.getOrNull() ?: return@async item
-                item.copy(backdrop = art.backdrop, thumb = art.thumb, logo = art.logo, poster = art.poster)
-            }
-        }.awaitAll()
-    }
-
-    private fun parsePlayback(arr: JSONArray): List<WatchItem> {
+    private fun parsePlayback(text: String?): List<WatchItem> {
+        val arr = text?.let { runCatching { JSONArray(it) }.getOrNull() } ?: return emptyList()
         val out = ArrayList<WatchItem>()
         for (i in 0 until arr.length()) {
             val j = arr.getJSONObject(i)
@@ -128,6 +158,6 @@ object ContinueWatching {
         )
     }
 
-    private fun time(iso: String?): Long =
+    internal fun time(iso: String?): Long =
         iso?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() } ?: 0L
 }

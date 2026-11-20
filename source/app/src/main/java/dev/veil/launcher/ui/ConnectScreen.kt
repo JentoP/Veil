@@ -44,63 +44,147 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import dev.veil.launcher.LauncherState
+import dev.veil.launcher.data.Service
 import kotlinx.coroutines.delay
 
 @Composable
 fun ConnectScreen(state: LauncherState) {
-    val dc = state.deviceCode
-    // No top bar here: its pills would take focus away from the sign-in code. Back cancels.
+    // No top bar here: its pills would take focus away from the sign-in code. Back goes back a step.
     Column(Modifier.fillMaxSize().background(Veil.Bg).padding(start = 48.dp, end = 48.dp, top = 26.dp)) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Text("CONNECT TRAKT", fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp, color = Veil.Accent)
-                Spacer(Modifier.height(8.dp))
-                Text("Show what you're watching", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.9).sp)
-                Spacer(Modifier.height(22.dp))
-                if (state.editingClientId) {
-                    ClientIdForm(state)
-                } else {
-                    if (dc != null) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            // Scanning opens Trakt's activate page with the code already filled in.
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                QrCode("${dc.url.trimEnd('/')}/${dc.userCode}", Modifier.size(150.dp))
-                                Spacer(Modifier.height(8.dp))
-                                Text("Scan with your phone", fontSize = 10.sp, color = Veil.Text.copy(alpha = 0.6f))
-                            }
-                            Spacer(Modifier.width(44.dp))
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("Or on your phone or computer, go to", fontSize = 12.sp, color = Veil.Text.copy(alpha = 0.7f))
-                                Spacer(Modifier.height(4.dp))
-                                Text(dc.url.removePrefix("https://"), fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                                Spacer(Modifier.height(16.dp))
-                                Text("and enter this code", fontSize = 12.sp, color = Veil.Text.copy(alpha = 0.7f))
-                                Spacer(Modifier.height(10.dp))
-                                Text(
-                                    dc.userCode,
-                                    color = Veil.Ink, fontSize = 34.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 6.sp,
-                                    modifier = Modifier.clip(RoundedCornerShape(50)).background(Veil.Text)
-                                        .padding(horizontal = 30.dp, vertical = 8.dp),
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(20.dp))
-                    }
-                    Text(state.connectStatus, fontSize = 11.sp, color = Veil.Text.copy(alpha = 0.7f))
-                    Spacer(Modifier.height(18.dp))
-                    // Not focused on purpose: nothing is highlighted until you press a direction key.
-                    Pill(onClick = { state.editClientId() }, padding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)) {
-                        Text(
-                            if (state.trakt.usingOwnId) "Change your Trakt app" else "Use your own Trakt app",
-                            fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    Spacer(Modifier.height(10.dp))
-                }
-                Text("Press Back to cancel", fontSize = 10.sp, color = Veil.Text.copy(alpha = 0.5f))
+                if (state.pickingService) ServicePicker(state) else SignInStep(state)
             }
         }
     }
+}
+
+/** Step 2: the sign-in code (QR + typed code) for the picked service, or Trakt's own-app form. */
+@Composable
+private fun SignInStep(state: LauncherState) {
+    val dc = state.deviceCode
+    Text("CONNECT ${state.service.title.uppercase()}", fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp, color = Veil.Accent)
+    Spacer(Modifier.height(8.dp))
+    Text("Show what you're watching", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.9).sp)
+    Spacer(Modifier.height(22.dp))
+    if (state.editingClientId) {
+        ClientIdForm(state)
+    } else {
+        if (dc != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Scanning opens the service's sign-in page with the code already filled in.
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    QrCode(dc.qrUrl, Modifier.size(150.dp))
+                    Spacer(Modifier.height(8.dp))
+                    Text("Scan with your phone", fontSize = 10.sp, color = Veil.Text.copy(alpha = 0.6f))
+                }
+                Spacer(Modifier.width(44.dp))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Or on your phone or computer, go to", fontSize = 12.sp, color = Veil.Text.copy(alpha = 0.7f))
+                    Spacer(Modifier.height(4.dp))
+                    Text(dc.url.removePrefix("https://"), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(16.dp))
+                    Text("and enter this code", fontSize = 12.sp, color = Veil.Text.copy(alpha = 0.7f))
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        dc.userCode,
+                        color = Veil.Ink, fontSize = 34.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 6.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(50)).background(Veil.Text)
+                            .padding(horizontal = 30.dp, vertical = 8.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+        }
+        Text(state.connectStatus, fontSize = 11.sp, color = Veil.Text.copy(alpha = 0.7f))
+        Spacer(Modifier.height(18.dp))
+        if (state.service == Service.TRAKT) {
+            // Not focused on purpose: nothing is highlighted until you press a direction key.
+            Pill(onClick = { state.editClientId() }, padding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)) {
+                Text(
+                    if (state.trakt.usingOwnId) "Change your Trakt app" else "Use your own Trakt app",
+                    fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+    }
+    Text("Press Back to pick another service", fontSize = 10.sp, color = Veil.Text.copy(alpha = 0.5f))
+}
+
+/** Step 1: pick where you track what you watch. One service at a time; picking another replaces it. */
+@Composable
+private fun ServicePicker(state: LauncherState) {
+    val first = remember { FocusRequester() }
+    Text("CONNECT A TRACKER", fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp, color = Veil.Accent)
+    Spacer(Modifier.height(8.dp))
+    Text("Where do you track what you watch?", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.9).sp)
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Veil shows your Continue Watching from one service. Your history stays there.",
+        fontSize = 12.sp, color = Veil.Text.copy(alpha = 0.65f),
+    )
+    Spacer(Modifier.height(26.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Service.entries.forEach { s ->
+            ServiceCard(
+                state, s,
+                Modifier.then(if (s == state.service) Modifier.focusRequester(first) else Modifier),
+            )
+        }
+    }
+    Spacer(Modifier.height(24.dp))
+    Text("Press Back to cancel", fontSize = 10.sp, color = Veil.Text.copy(alpha = 0.5f))
+    LaunchedEffect(Unit) { delay(120); runCatching { first.requestFocus() } }
+}
+
+@OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ServiceCard(state: LauncherState, s: Service, modifier: Modifier) {
+    val available = state.available(s)
+    val isCurrent = s == state.service && state.connected
+    androidx.tv.material3.Surface(
+        onClick = { Sfx.select(); state.chooseService(s) },
+        modifier = modifier.width(196.dp).height(176.dp).focusSound(1.12f),
+        shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
+        colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
+            containerColor = Veil.Glass, contentColor = Veil.Text,
+            focusedContainerColor = Veil.Text, focusedContentColor = Veil.Ink,
+        ),
+        border = androidx.tv.material3.ClickableSurfaceDefaults.border(
+            border = androidx.tv.material3.Border(
+                androidx.compose.foundation.BorderStroke(1.dp, Veil.Line), shape = RoundedCornerShape(20.dp),
+            ),
+            focusedBorder = androidx.tv.material3.Border.None,
+        ),
+        scale = androidx.tv.material3.ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    androidx.compose.ui.res.painterResource(logoOf(s)), contentDescription = null,
+                    modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)),
+                )
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(s.title, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.4).sp)
+                    when {
+                        isCurrent -> Text("Connected", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = androidx.tv.material3.LocalContentColor.current.copy(alpha = 0.7f))
+                        !available -> Text("Not available yet", fontSize = 9.sp, color = androidx.tv.material3.LocalContentColor.current.copy(alpha = 0.6f))
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(s.blurb, fontSize = 11.sp, lineHeight = 15.sp, color = androidx.tv.material3.LocalContentColor.current.copy(alpha = 0.75f))
+        }
+    }
+}
+
+private fun logoOf(s: Service): Int = when (s) {
+    Service.TRAKT -> dev.veil.launcher.R.drawable.logo_trakt
+    Service.SIMKL -> dev.veil.launcher.R.drawable.logo_simkl
+    Service.MDBLIST -> dev.veil.launcher.R.drawable.logo_mdblist
+    Service.WETRAKR -> dev.veil.launcher.R.drawable.logo_wetrakr
 }
 
 /** Client ID of your own Trakt app. Saved on the TV, so it survives Veil updates. */

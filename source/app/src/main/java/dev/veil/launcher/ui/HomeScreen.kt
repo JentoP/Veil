@@ -84,8 +84,9 @@ fun HomeScreen(state: LauncherState) {
     val focusKey: (String) -> FocusRequester = { k -> requesters.getOrPut(k) { FocusRequester() } }
 
     // On start and each time Home is pressed: go back to the item last used on Home (e.g. the app you
-    // launched); fall back to the first Continue Watching pill.
-    LaunchedEffect(state.homeTick, state.items.isEmpty(), state.connected) {
+    // launched); fall back to the first app. Not re-run when the Trakt list loads, so focus never jumps
+    // while you're moving around. apps.isEmpty() only flips once, on a cold start (well under a second).
+    LaunchedEffect(state.homeTick, state.apps.isEmpty()) {
         delay(60)
         val last = state.lastFocusKey?.let { requesters[it] }
         val ok = last != null && runCatching { last.requestFocus() }.isSuccess
@@ -113,7 +114,7 @@ fun HomeScreen(state: LauncherState) {
     // the menu's text always sits on a calm surface. Dropdown panels (Veil menu, privacy) leave the top
     // bar alone; full menus (hold menus, pickers) fade it too.
     val dialogOpen = state.sheet != null || state.privacySheet || state.musicSheet || state.watchSheet != null ||
-        state.weatherPicker || state.vizSettingsOpen
+        state.weatherPicker || state.vizSettingsOpen || state.updateDialog
     val panelOpen = state.veilMenuOpen || (state.privacyFocused && state.dnsAvailable)
     // Read only at draw time (graphicsLayer blocks): reading these during composition rebuilt the whole of
     // Home on every frame of the 0.26 s animation whenever a menu opened or closed.
@@ -144,9 +145,9 @@ fun HomeScreen(state: LauncherState) {
             Column(Modifier.recede(frost)) {
                 Hero(hero, state, Modifier.padding(horizontal = EDGE))
                 Spacer(Modifier.height(24.dp))
-                ContinueRow(state, firstFocus, focusKey)
+                ContinueRow(state, focusKey)
                 Spacer(Modifier.height(14.dp))
-                AppsRow(state, focusKey)
+                AppsRow(state, firstFocus, focusKey)
             }
         }
     }
@@ -270,7 +271,7 @@ private fun HeroBody(hero: WatchItem?, state: LauncherState) {
 }
 
 @Composable
-private fun ContinueRow(state: LauncherState, firstFocus: FocusRequester, focusKey: (String) -> FocusRequester) {
+private fun ContinueRow(state: LauncherState, focusKey: (String) -> FocusRequester) {
     val listState = rememberLazyListState()
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Row(Modifier.padding(horizontal = EDGE), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -299,14 +300,13 @@ private fun ContinueRow(state: LauncherState, firstFocus: FocusRequester, focusK
         ) {
             when {
                 !state.connected -> item {
-                    MessagePill("Connect Trakt", "Show what you're watching in Nuvio", state::startConnect, Modifier.focusRequester(firstFocus))
+                    MessagePill("Connect a tracker", "Trakt, Simkl, MDBList or WeTrakr: show what you're watching", state::startConnect)
                 }
                 state.items.isEmpty() -> item {
                     MessagePill(
                         if (state.loading) "Loading…" else (state.error ?: "Nothing in progress"),
-                        if (state.loading) "Fetching from Trakt" else "Start something in Nuvio",
+                        if (state.loading) "Fetching from ${state.service.title}" else "Start something in ${state.player.title}",
                         { state.refreshWatching(force = true) },
-                        Modifier.focusRequester(firstFocus),
                     )
                 }
                 else -> itemsIndexed(state.items, key = { _, it -> it.key }) { index, item ->
@@ -315,7 +315,6 @@ private fun ContinueRow(state: LauncherState, firstFocus: FocusRequester, focusK
                         onClick = { state.open(item) },
                         onLongClick = { state.watchSheet = item },
                         modifier = Modifier
-                            .then(if (index == 0) Modifier.focusRequester(firstFocus) else Modifier)
                             .remembered(state, "cw:${item.key}", focusKey)
                             .onFocusChanged { if (it.isFocused) { state.focused = item; state.focusedIndex = index } },
                     )
@@ -365,7 +364,7 @@ private fun WatchPill(item: WatchItem, onClick: () -> Unit, onLongClick: () -> U
 }
 
 @Composable
-private fun MessagePill(title: String, body: String, onClick: () -> Unit, modifier: Modifier) {
+private fun MessagePill(title: String, body: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Pill(onClick = onClick, modifier = modifier, padding = PaddingValues(start = 6.dp, end = 20.dp, top = 6.dp, bottom = 6.dp), soundPitch = 0.9f) {
         Box(Modifier.size(74.dp, 42.dp).clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
             androidx.tv.material3.Icon(VeilIcons.Play, contentDescription = null, modifier = Modifier.size(14.dp), tint = LocalContentColor.current)
@@ -378,8 +377,9 @@ private fun MessagePill(title: String, body: String, onClick: () -> Unit, modifi
 }
 
 @Composable
-private fun AppsRow(state: LauncherState, focusKey: (String) -> FocusRequester) {
+private fun AppsRow(state: LauncherState, firstFocus: FocusRequester, focusKey: (String) -> FocusRequester) {
     val listState = rememberLazyListState()
+    val noPins = state.pinnedApps.isEmpty()
     LazyRow(
         state = listState,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -387,18 +387,23 @@ private fun AppsRow(state: LauncherState, focusKey: (String) -> FocusRequester) 
         modifier = Modifier.fillMaxWidth()
             .edgeFade(left = listState.canScrollBackward, right = listState.canScrollForward),
     ) {
-        itemsIndexed(state.pinnedApps, key = { _, a -> a.pkg }) { _, app ->
+        // Home's default focus: the first pinned app (or All apps when nothing is pinned).
+        itemsIndexed(state.pinnedApps, key = { _, a -> a.pkg }) { index, app ->
             AppPill(
                 app = app,
                 onClick = { state.launch(app) },
                 onLongClick = { state.sheet = AppSheet(app, fromHome = true) },
-                modifier = Modifier.remembered(state, "app:${app.pkg}", focusKey),
+                modifier = Modifier
+                    .then(if (index == 0) Modifier.focusRequester(firstFocus) else Modifier)
+                    .remembered(state, "app:${app.pkg}", focusKey),
             )
         }
         item(key = "all-apps") {
             AllAppsPill(
                 onClick = { state.screen = Screen.DRAWER },
-                modifier = Modifier.remembered(state, "all-apps", focusKey),
+                modifier = Modifier
+                    .then(if (noPins) Modifier.focusRequester(firstFocus) else Modifier)
+                    .remembered(state, "all-apps", focusKey),
             )
         }
     }

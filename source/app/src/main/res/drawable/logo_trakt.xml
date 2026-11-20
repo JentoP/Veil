@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Trakt's app icon (from trakt.tv/favicon.svg), only to identify the service on the Connect screen. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#6438D0"
+        android:pathData="M10.8,0 H37.2 A10.8,10.8 0 0 1 48,10.8 V37.2 A10.8,10.8 0 0 1 37.2,48 H10.8 A10.8,10.8 0 0 1 0,37.2 V10.8 A10.8,10.8 0 0 1 10.8,0 Z" />
+    <group
+        android:translateX="6.24"
+        android:translateY="6.24"
+        android:scaleX="0.5823"
+        android:scaleY="0.5823">
+        <path
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="7.2"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M56.00,38.95 A27.5,27.5 0 1 1 36.19,3.20" />
+        <path
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="7.2"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M16.93,27.11 L35.82,42.96 M29.92,34.75 L53.89,6.17 M56.69,18.31 L42.49,35.24 M26.88,22.41 L23.36,19.45" />
+    </group>
+</vector>

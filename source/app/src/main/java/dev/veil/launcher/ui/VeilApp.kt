@@ -35,7 +35,7 @@ fun VeilApp(state: LauncherState) {
         when (state.screen) {
             Screen.HOME -> Unit
             Screen.DRAWER -> { Sfx.back(); state.screen = Screen.HOME }
-            Screen.CONNECT -> { Sfx.back(); state.cancelConnect() }
+            Screen.CONNECT -> { Sfx.back(); state.connectBack() }
         }
     }
     // Once Ambient fully covers the screen, stop drawing the page underneath it.
@@ -77,6 +77,7 @@ fun VeilApp(state: LauncherState) {
     }
     if (state.weatherPicker) WeatherPicker(state)
     if (state.vizSettingsOpen) VizSettingsDialog(state)
+    if (state.updateDialog) UpdateDialog(state)
 
     // Veil Ambient sits above everything; any button press (handled in MainActivity) dismisses it.
     AnimatedVisibility(visible = state.ambient, enter = fadeIn(tween(900)), exit = fadeOut(tween(350))) {

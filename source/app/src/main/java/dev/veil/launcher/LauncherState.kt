@@ -10,7 +10,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.veil.launcher.data.AppEntry
 import dev.veil.launcher.data.Apps
+import dev.veil.launcher.data.BadClientId
 import dev.veil.launcher.data.ContinueWatching
+import dev.veil.launcher.data.DeviceCode
+import dev.veil.launcher.data.MdbList
+import dev.veil.launcher.data.WeTrakr
+import dev.veil.launcher.data.Poll
+import dev.veil.launcher.data.Service
+import dev.veil.launcher.data.Simkl
+import dev.veil.launcher.data.Tracker
 import dev.veil.launcher.data.NextDnsStats
 import dev.veil.launcher.data.NowPlaying
 import dev.veil.launcher.data.PrivateDns
@@ -40,8 +48,24 @@ data class AppSheet(val app: AppEntry, val fromHome: Boolean)
 @androidx.compose.runtime.Stable
 class LauncherState(private val context: Context, private val scope: CoroutineScope) {
     val trakt = Trakt(context)
+    private val simkl = Simkl(context)
+    private val mdblist = MdbList(context)
+    private val wetrakr = WeTrakr(context)
     private val tmdb = Tmdb(BuildConfig.TMDB_KEY)
     private val prefs = context.getSharedPreferences("veil", Context.MODE_PRIVATE)
+
+    /** The one tracker Continue Watching comes from (Trakt unless you picked another). */
+    var service by mutableStateOf(Service.of(prefs.getString("tracker", null)))
+        private set
+    val tracker: Tracker get() = trackerFor(service)
+    private fun trackerFor(s: Service): Tracker = when (s) {
+        Service.TRAKT -> trakt
+        Service.SIMKL -> simkl
+        Service.MDBLIST -> mdblist
+        Service.WETRAKR -> wetrakr
+    }
+    /** Whether a service has a client ID in this build (otherwise it's shown as not available). */
+    fun available(s: Service) = trackerFor(s).hasKeys || s == Service.TRAKT
 
     var screen by mutableStateOf(Screen.HOME)
     var apps by mutableStateOf<List<AppEntry>>(emptyList())
@@ -55,9 +79,12 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
         private set
     var error by mutableStateOf<String?>(null)
         private set
-    var connected by mutableStateOf(trakt.isConnected)
+    var connected by mutableStateOf(tracker.isConnected)
         private set
-    var deviceCode by mutableStateOf<Trakt.DeviceCode?>(null)
+    var deviceCode by mutableStateOf<DeviceCode?>(null)
+        private set
+    /** Connect screen step 1: pick Trakt, Simkl, MDBList or WeTrakr. Step 2 is the sign-in code. */
+    var pickingService by mutableStateOf(true)
         private set
     var connectStatus by mutableStateOf("")
         private set
@@ -194,7 +221,7 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
     }
 
     fun refreshWatching(force: Boolean = false) {
-        connected = trakt.isConnected
+        connected = tracker.isConnected
         if (!connected || loading) return
         val now = System.currentTimeMillis()
         if (!force && now - lastLoad < 30_000) return
@@ -202,7 +229,9 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
         scope.launch {
             loading = true
             try {
-                val result = withContext(Dispatchers.IO) { ContinueWatching.load(trakt, tmdb) }
+                val source = tracker
+                val result = withContext(Dispatchers.IO) { ContinueWatching.withArt(source.continueWatching(force), tmdb) }
+                if (source !== tracker) return@launch // switched service while loading
                 items = result
                 VeilCache.items = result
                 val keep = result.firstOrNull { it.key == focused?.key }
@@ -210,10 +239,10 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
                 focusedIndex = if (keep != null) result.indexOf(keep) else 0
                 error = null
             } catch (e: Exception) {
-                error = "Couldn't reach Trakt"
+                error = "Couldn't reach ${service.title}"
             } finally {
                 loading = false
-                connected = trakt.isConnected
+                connected = tracker.isConnected
             }
         }
     }
@@ -264,8 +293,61 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
         scope.launch { delay(6_000); if (dnsMessage == msg) dnsMessage = null }
     }
 
+    // ---- "Update available" (Veil menu row + a dot on the "veil" button; never a popup) -----------
+
+    /** Daily check for a newer Veil on GitHub. Default from the build (UPDATE_CHECK), switchable on the TV. */
+    var updateCheck by mutableStateOf(prefs.getBoolean("update_check", BuildConfig.UPDATE_CHECK))
+        private set
+    private var latestUpdate by mutableStateOf(
+        prefs.getString("update_sha", null)?.let {
+            dev.veil.launcher.data.UpdateCheck.Update(it, prefs.getLong("update_time", 0), prefs.getString("update_title", "").orEmpty())
+        },
+    )
+    /** "Hide until the next update" belongs to the build it was chosen on; a reinstall shows it again. */
+    private var hiddenUpdate by mutableStateOf(
+        prefs.getString("update_hidden", null)?.takeIf { prefs.getLong("update_hidden_src", 0) == BuildConfig.SOURCE_TIME },
+    )
+    /** The bigger "Update available" window, opened from the Veil menu row. */
+    var updateDialog by mutableStateOf(false)
+
+    /**
+     * The newer version to mention, if any. "Newer" means changed on GitHub well after this build's own
+     * source (2 h of slack: the public commit is made a little after the code it publishes).
+     */
+    val availableUpdate: dev.veil.launcher.data.UpdateCheck.Update?
+        get() = latestUpdate?.takeIf {
+            updateCheck && it.sha != hiddenUpdate && it.time > BuildConfig.SOURCE_TIME * 1000 + 2 * 3600_000L
+        }
+
+    fun toggleUpdateCheck() {
+        updateCheck = !updateCheck
+        prefs.edit().putBoolean("update_check", updateCheck).putLong("update_checked", 0).apply()
+        if (updateCheck) checkForUpdate()
+    }
+
+    /** "Hide until the next update": forgets this one; a newer commit shows again. */
+    fun hideUpdate() {
+        hiddenUpdate = latestUpdate?.sha
+        prefs.edit().putString("update_hidden", hiddenUpdate).putLong("update_hidden_src", BuildConfig.SOURCE_TIME).apply()
+    }
+
+    /** At most once a day, never in the first minutes after boot, silent on any failure. */
+    private fun checkForUpdate() {
+        if (!updateCheck) return
+        val now = System.currentTimeMillis()
+        if (android.os.SystemClock.elapsedRealtime() < 3 * 60_000L) return
+        if (now - prefs.getLong("update_checked", 0) < 24 * 3600_000L) return
+        prefs.edit().putLong("update_checked", now).apply()
+        scope.launch {
+            val u = withContext(Dispatchers.IO) { dev.veil.launcher.data.UpdateCheck.latest() } ?: return@launch
+            latestUpdate = u
+            prefs.edit().putString("update_sha", u.sha).putLong("update_time", u.time).putString("update_title", u.title).apply()
+        }
+    }
+
     /** Weather every 30 min, blocked counter every 5 min. Cheap to call often. */
     fun refreshExtras() {
+        checkForUpdate()
         dnsOn = dns.isOn
         dnsResumeAt = dns.resumeAt
         val now = System.currentTimeMillis()
@@ -306,23 +388,23 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
         toastJob = scope.launch { delay(3_500); toast = null }
     }
 
-    // ---- Continue Watching actions (written to Trakt, not just hidden here) ----
+    // ---- Continue Watching actions (written to the tracker, not just hidden here) ----
 
     private fun label(item: WatchItem) = if (item.isMovie) item.title else "${item.title} S${item.season} E${item.episode}"
 
-    /** Adds it to your Trakt history; the row then moves on to the next episode. */
-    fun markWatched(item: WatchItem) = traktAction(item, "Marked ${label(item)} as watched") { trakt.markWatched(item) }
+    /** Adds it to your watch history on the tracker; the row then moves on to the next episode. */
+    fun markWatched(item: WatchItem) = trackerAction(item, "Marked ${label(item)} as watched") { tracker.markWatched(item) }
 
-    /** Clears progress on Trakt and hides the show from Trakt's progress (Up Next). */
-    fun removeFromRow(item: WatchItem) = traktAction(item, "Removed ${item.title} from Continue Watching") { trakt.removeFromProgress(item) }
+    /** Clears progress on the tracker and takes the show out of its Up Next. */
+    fun removeFromRow(item: WatchItem) = trackerAction(item, "Removed ${item.title} from Continue Watching") { tracker.removeFromProgress(item) }
 
-    private fun traktAction(item: WatchItem, done: String, call: () -> Boolean) {
+    private fun trackerAction(item: WatchItem, done: String, call: () -> Boolean) {
         items = items.filterNot { it.key == item.key }          // instant feedback
         if (focused?.key == item.key) focused = items.firstOrNull()
         scope.launch {
             val ok = withContext(Dispatchers.IO) { runCatching(call).getOrDefault(false) }
             if (ok) { dev.veil.launcher.ui.Sfx.success(); showToast(done) }
-            else { dev.veil.launcher.ui.Sfx.error(); showToast("Couldn't reach Trakt. Nothing was changed") }
+            else { dev.veil.launcher.ui.Sfx.error(); showToast("Couldn't reach ${service.title}. Nothing was changed") }
             lastLoad = 0
             refreshWatching(force = true)                          // pick up the next episode / restore on failure
         }
@@ -358,6 +440,8 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
     // ---- Veil menu (drops down from the wordmark) -------------------------------------------------
 
     var veilMenuOpen by mutableStateOf(false)
+    /** Bumped when OK opens the Veil menu, so focus moves into it. */
+    var veilMenuFocusTick by mutableStateOf(0)
     var vizSettingsOpen by mutableStateOf(false)
     /** Which Veil-menu button should get focus back after its window closes ("viz", "weather"). */
     var menuReturn by mutableStateOf<String?>(null)
@@ -478,7 +562,7 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
     /** Music playing: ambient after 30 s idle on Home. Otherwise after 5 min. */
     fun checkIdle() {
         if (ambient || screen != Screen.HOME || sheet != null || privacySheet || musicSheet || weatherPicker ||
-            vizSettingsOpen || watchSheet != null
+            vizSettingsOpen || updateDialog || watchSheet != null
         ) return
         val idle = System.currentTimeMillis() - lastInput
         val playing = nowPlaying.track?.playing == true
@@ -492,51 +576,96 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
             ?.let { start(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     }
 
-    // ---- Trakt sign-in ------------------------------------------------------------------------
+    // ---- Tracker sign-in (Trakt, Simkl, MDBList, WeTrakr) ----------------------------------------
 
+    /** Opens the Connect screen on the service picker. */
     fun startConnect() {
         sheet = null
-        if (!trakt.hasKeys) {
+        connectJob?.cancel()
+        deviceCode = null
+        editingClientId = false
+        connectStatus = ""
+        pickingService = true
+        screen = Screen.CONNECT
+    }
+
+    /**
+     * Picks the service and starts its sign-in. Only one is connected at a time: choosing a different one
+     * signs out of the current one here (your history stays on that service).
+     */
+    fun chooseService(s: Service) {
+        // Never sign out of the current service for one that can't sign in.
+        if (!available(s)) { showToast("${s.title} isn't set up in this version of Veil yet"); return }
+        if (s == service && connected) { cancelConnect(); return } // already connected: nothing to do
+        if (s != service) {
+            tracker.disconnect()
+            service = s
+            prefs.edit().putString("tracker", s.id).apply()
+            connected = false
+            items = emptyList()
+            VeilCache.items = emptyList()
+            focused = null
+            focusedIndex = 0
+            lastLoad = 0
+        }
+        pickingService = false
+        beginSignIn()
+    }
+
+    private fun beginSignIn() {
+        val t = tracker
+        val name = t.service.title
+        editingClientId = false
+        deviceCode = null
+        screen = Screen.CONNECT
+        if (!t.hasKeys) {
             connectStatus = ""
-            editClientId()
-            screen = Screen.CONNECT
+            if (t.service == Service.TRAKT) editClientId()
+            else connectStatus = "$name isn't set up in this version of Veil yet."
             return
         }
-        editingClientId = false
-        screen = Screen.CONNECT
         connectStatus = "Getting a code…"
-        deviceCode = null
         connectJob?.cancel()
         connectJob = scope.launch {
             try {
-                val dc = withContext(Dispatchers.IO) { trakt.requestDeviceCode() }
+                val dc = withContext(Dispatchers.IO) { t.requestDeviceCode() }
                 deviceCode = dc
                 connectStatus = "Waiting for you to approve…"
                 var interval = dc.interval.coerceAtLeast(1)
                 val end = System.currentTimeMillis() + dc.expiresIn * 1000L
                 while (System.currentTimeMillis() < end) {
                     delay(interval * 1000L)
-                    when (withContext(Dispatchers.IO) { runCatching { trakt.pollDeviceToken(dc) }.getOrDefault(Trakt.Poll.PENDING) }) {
-                        Trakt.Poll.AUTHORIZED -> {
+                    when (withContext(Dispatchers.IO) { runCatching { t.pollDeviceToken(dc) }.getOrDefault(Poll.PENDING) }) {
+                        Poll.AUTHORIZED -> {
                             connected = true
                             deviceCode = null
                             screen = Screen.HOME
                             refreshWatching(force = true)
                             return@launch
                         }
-                        Trakt.Poll.SLOW_DOWN -> interval++
-                        Trakt.Poll.FAILED -> { connectStatus = "Sign-in was denied or the code expired. Press Back and try again."; return@launch }
-                        Trakt.Poll.PENDING -> Unit
+                        Poll.SLOW_DOWN -> interval += 5
+                        Poll.FAILED -> { connectStatus = "Sign-in was denied or the code expired. Press Back and try again."; return@launch }
+                        Poll.PENDING -> Unit
                     }
                 }
                 connectStatus = "The code expired. Press Back and try again."
-            } catch (e: Trakt.BadClientId) {
-                connectStatus = "Trakt didn't accept this client ID. Check it and enter it again."
-                editClientId()
+            } catch (e: BadClientId) {
+                if (t.service == Service.TRAKT) {
+                    connectStatus = "Trakt didn't accept this client ID. Check it and enter it again."
+                    editClientId()
+                } else {
+                    connectStatus = "$name didn't accept Veil's app ID. Please report this on GitHub."
+                }
             } catch (e: Exception) {
-                connectStatus = "Couldn't reach Trakt. Check the network and try again."
+                connectStatus = "Couldn't reach $name. Check the network and try again."
             }
         }
+    }
+
+    /** Back on the Connect screen: from a sign-in code to the picker, from the picker to Home. */
+    fun connectBack() {
+        if (pickingService) cancelConnect()
+        else { connectJob?.cancel(); deviceCode = null; editingClientId = false; connectStatus = ""; pickingService = true }
     }
 
     /** Shows the client ID field (stops any sign-in in progress). */
@@ -553,18 +682,19 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
         items = emptyList()
         focused = null
         focusedIndex = 0
-        startConnect()
+        beginSignIn()
     }
 
     fun cancelConnect() {
         connectJob?.cancel()
         deviceCode = null
         editingClientId = false
+        pickingService = true
         screen = Screen.HOME
     }
 
     fun disconnect() {
-        trakt.disconnect()
+        tracker.disconnect()
         connected = false
         items = emptyList()
         focused = null
@@ -582,8 +712,53 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
     )
 
-    /** Opens the item straight into Nuvio's stream picker, the same way Nuvio's own Watch Next cards do. */
+    // ---- Which app plays Continue Watching (chosen once in the Veil menu) ----
+
+    /** Apps that can open the exact episode/movie from an IMDb id. */
+    enum class Player(val id: String, val title: String, val pkg: String) {
+        NUVIO("nuvio", "Nuvio", NUVIO_PKG),
+        STREMIO("stremio", "Stremio", STREMIO_PKG),
+    }
+
+    var player by mutableStateOf(Player.entries.firstOrNull { it.id == prefs.getString("player", null) } ?: Player.NUVIO)
+        private set
+
+    fun isInstalled(p: Player): Boolean =
+        runCatching { context.packageManager.getPackageInfo(p.pkg, 0); true }.getOrDefault(false)
+
+    fun choosePlayer(p: Player) {
+        if (!isInstalled(p)) { dev.veil.launcher.ui.Sfx.error(); showToast("${p.title} isn't installed on this TV"); return }
+        player = p
+        prefs.edit().putString("player", p.id).apply()
+    }
+
+    /** The chosen player, or another supported one if it was uninstalled. */
+    private fun effectivePlayer(): Player =
+        if (isInstalled(player)) player else Player.entries.firstOrNull { isInstalled(it) } ?: player
+
+    /** Opens the item in the chosen player, straight to its streams. */
     fun open(item: WatchItem) {
+        if (effectivePlayer() == Player.STREMIO) openInStremio(item) else openInNuvio(item)
+    }
+
+    /** stremio:///detail/{type}/{imdb}/{videoId}: the episode's (or movie's) stream list. */
+    private fun openInStremio(item: WatchItem) {
+        val imdb = item.imdb
+        val uri = when {
+            imdb == null -> null
+            item.isMovie -> "stremio:///detail/movie/$imdb/$imdb"
+            else -> "stremio:///detail/series/$imdb/$imdb:${item.season}:${item.episode}"
+        }
+        val i = uri?.let { Intent(Intent.ACTION_VIEW, Uri.parse(it)).setPackage(STREMIO_PKG).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        if (i == null || !start(i)) {
+            context.packageManager.getLeanbackLaunchIntentForPackage(STREMIO_PKG)?.let {
+                start(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        }
+    }
+
+    /** Opens the item straight into Nuvio's stream picker, the same way Nuvio's own Watch Next cards do. */
+    private fun openInNuvio(item: WatchItem) {
         val i = Intent(Intent.ACTION_MAIN)
             .setClassName(NUVIO, "$NUVIO.MainActivity")
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -620,6 +795,8 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
 
     companion object {
         const val NUVIO = "com.nuvio.tv"
+        const val NUVIO_PKG = NUVIO
+        const val STREMIO_PKG = "com.stremio.one"
         val DEFAULT_PINS = listOf(
             "io.gh.reisxd.tizentube.cobalt",
             NUVIO,

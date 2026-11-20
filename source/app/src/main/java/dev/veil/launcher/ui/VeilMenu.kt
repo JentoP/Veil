@@ -10,6 +10,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -72,26 +74,32 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
- * The "veil" wordmark is a button. While it — or anything in its menu — has focus, the Veil menu drops
- * down under it: start Veil Ambient, pick a theme, change the weather location. Press Down to enter it.
+ * The "veil" wordmark is a button. OK drops the Veil menu down under it (start Veil Ambient, pick a theme,
+ * change the weather location) and moves focus to its first item; OK again closes it. It also closes when
+ * focus leaves the button and the menu.
  */
 @Composable
 fun VeilMenuAnchor(state: LauncherState) {
-    var focused by remember { mutableStateOf(false) }
-    // Open only after focus has rested here briefly: when Veil comes to the front, focus passes over the
-    // wordmark for a few ms before landing on Continue Watching, which would otherwise flash the menu.
-    LaunchedEffect(focused) {
-        if (focused) { delay(200); if (!state.veilMenuOpen) Sfx.open(); state.veilMenuOpen = true } else state.veilMenuOpen = false
-    }
-    Box(Modifier.onFocusChanged { focused = it.hasFocus; state.wordmarkFocused = it.hasFocus }) {
+    val firstItem = remember { FocusRequester() }
+    // focusGroup: the button and its menu share one focus parent, so moving focus between them never
+    // reads as "focus left" for a moment (which closed the menu right after OK opened it).
+    Box(Modifier.onFocusChanged {
+        state.wordmarkFocused = it.hasFocus
+        if (!it.hasFocus) state.veilMenuOpen = false
+    }.focusGroup()) {
         // Styled like the other top-bar pills (soft fill + outline + chevron) so it reads as a button.
         Surface(
-            onClick = { /* the menu opens on focus; OK does nothing extra */ },
-            // Back closes the menu from the "veil" button too (not only from inside the menu), by sending
-            // focus back to the page, exactly like the panel's own Back handling.
+            onClick = {
+                if (state.veilMenuOpen) { Sfx.back(); state.veilMenuOpen = false }
+                else { Sfx.open(); state.veilMenuOpen = true; state.veilMenuFocusTick++ }
+            },
+            // Back from the "veil" button closes the menu if it's open, otherwise returns to the page.
             modifier = Modifier.focusSound(1.12f).onPreviewKeyEvent { e ->
-                if (e.key == Key.Back && e.type == KeyEventType.KeyUp) { Sfx.back(); state.focusHome(); true }
-                else e.key == Key.Back
+                if (e.key == Key.Back && e.type == KeyEventType.KeyUp) {
+                    Sfx.back()
+                    if (state.veilMenuOpen) state.veilMenuOpen = false else state.focusHome()
+                    true
+                } else e.key == Key.Back
             },
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
             colors = ClickableSurfaceDefaults.colors(
@@ -117,12 +125,17 @@ fun VeilMenuAnchor(state: LauncherState) {
                     VeilIcons.ChevronDown, contentDescription = "Menu", modifier = Modifier.size(11.dp),
                     tint = LocalContentColor.current.copy(alpha = 0.7f),
                 )
+                // A newer Veil is on GitHub: a small accent dot, like an unread badge. Details in the menu.
+                if (state.availableUpdate != null) {
+                    Spacer(Modifier.width(5.dp))
+                    Box(Modifier.size(6.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Veil.Accent))
+                }
             }
         }
         Box(Modifier.floatingBelow(40.dp)) {
             // Kept built while on Home (it was rebuilt from scratch on every open, which stuttered); while
             // closed it isn't placed on screen, so the remote can never move focus into it.
-            KeptPanel(open = state.veilMenuOpen) { VeilPanel(state) }
+            KeptPanel(open = state.veilMenuOpen) { VeilPanel(state, firstItem) }
         }
     }
 }
@@ -156,20 +169,37 @@ private fun KeptPanel(open: Boolean, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun VeilPanel(state: LauncherState) {
+private fun VeilPanel(state: LauncherState, firstItem: FocusRequester) {
     var focusedTheme by remember { mutableStateOf<VeilThemeSpec?>(null) }
+    // Opened with OK: move focus to the first item once the panel is placed (it's placed the frame it opens).
+    LaunchedEffect(state.veilMenuFocusTick) {
+        if (state.veilMenuFocusTick > 0 && state.veilMenuOpen) {
+            withFrameNanos { }
+            runCatching { firstItem.requestFocus() }
+        }
+    }
     val current = ThemeState.current
     val vizButton = remember { FocusRequester() }
     val weatherButton = remember { FocusRequester() }
+    val updateButton = remember { FocusRequester() }
     // The panel stays built between opens; start each open scrolled to the top, as before.
     val scroll = rememberScrollState()
     LaunchedEffect(state.veilMenuOpen) { if (!state.veilMenuOpen) scroll.scrollTo(0) }
     // After a window opened from this menu closes, put focus back on the button that opened it.
     LaunchedEffect(state.menuReturn) {
-        val target = when (state.menuReturn) { "viz" -> vizButton; "weather" -> weatherButton; else -> null }
+        val target = when (state.menuReturn) {
+            "viz" -> vizButton
+            "weather" -> weatherButton
+            "update" -> updateButton
+            // "Hide until the next update": move focus off the row first, then remove it. Removing the
+            // focused row first would leave the menu without focus, which closes it.
+            "update-hide" -> firstItem
+            else -> null
+        }
         if (target != null) {
             delay(80)
             runCatching { target.requestFocus() }
+            if (state.menuReturn == "update-hide") { withFrameNanos { }; state.hideUpdate() }
             state.menuReturn = null
         }
     }
@@ -192,8 +222,35 @@ private fun VeilPanel(state: LauncherState) {
             Text("Private by design · no ads · no tracking", fontSize = 9.sp, color = Veil.Text.copy(alpha = 0.6f))
         }
 
+        // A newer Veil on GitHub: a short row; OK opens the details window, where you decide.
+        state.availableUpdate?.let { u ->
+            MenuButton(
+                icon = VeilIcons.Sparkle,
+                title = "Update available",
+                subtitle = "${ago(u.time).replaceFirstChar { it.uppercase() }} · OK for details",
+                modifier = Modifier.focusRequester(updateButton),
+                onClick = { state.updateDialog = true },
+            )
+        }
+
         // Ambient
-        MenuButton(icon = VeilIcons.Sparkle, title = "Start Veil Ambient", subtitle = "Screensaver & music mode", onClick = state::startAmbient)
+        MenuButton(
+            icon = VeilIcons.Sparkle, title = "Start Veil Ambient", subtitle = "Screensaver & music mode",
+            modifier = Modifier.focusRequester(firstItem), onClick = state::startAmbient,
+        )
+
+        // Which app OK on a Continue Watching card opens (chosen once, remembered)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionLabel("PLAY SHOWS WITH")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LauncherState.Player.entries.forEach { p ->
+                    ModeChip(
+                        if (state.isInstalled(p)) p.title else "${p.title} (not installed)",
+                        VeilIcons.Play, state.player == p, Modifier.weight(1f),
+                    ) { state.choosePlayer(p) }
+                }
+            }
+        }
 
         // Music mode: what Veil Ambient shows while music plays
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -286,7 +343,29 @@ private fun VeilPanel(state: LauncherState) {
             )
         }
 
+        // Update check (one small request a day to GitHub's public API)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionLabel("UPDATES")
+            MenuButton(
+                icon = VeilIcons.Sparkle,
+                title = "Check for updates: " + if (state.updateCheck) "on" else "off",
+                subtitle = "Once a day, asks GitHub if a newer Veil is out. Nothing about you is sent",
+                onClick = state::toggleUpdateCheck,
+            )
+        }
+
         Text("Back to close", fontSize = 8.5.sp, color = Veil.Text.copy(alpha = 0.45f))
+    }
+}
+
+/** "today", "yesterday", "3 days ago", "2 weeks ago". */
+private fun ago(time: Long): String {
+    val days = ((System.currentTimeMillis() - time) / 86_400_000L).coerceAtLeast(0)
+    return when {
+        days == 0L -> "today"
+        days == 1L -> "yesterday"
+        days < 14 -> "$days days ago"
+        else -> "${days / 7} weeks ago"
     }
 }
 
@@ -392,6 +471,57 @@ private fun ThemeBubble(theme: VeilThemeSpec, selected: Boolean, onClick: () -> 
             }
         }
     }
+}
+
+/** Details of a newer Veil, and the choice: remind me later, or hide until the next update. */
+@Composable
+fun UpdateDialog(state: LauncherState) {
+    val u = state.availableUpdate
+    val later = remember { FocusRequester() }
+    val close = { state.updateDialog = false; state.menuReturn = "update" }
+    if (u == null) { LaunchedEffect(Unit) { close() }; return }
+    val yours = java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy")
+        .format(java.time.Instant.ofEpochSecond(dev.veil.launcher.BuildConfig.SOURCE_TIME).atZone(java.time.ZoneId.systemDefault()))
+    Dialog(onDismissRequest = { Sfx.back(); close() }) {
+        Column(
+            Modifier.width(400.dp).clip(RoundedCornerShape(20.dp)).background(Veil.Sheet)
+                .border(1.dp, Veil.Line, RoundedCornerShape(20.dp)).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("UPDATE AVAILABLE", fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp, color = Veil.Accent)
+            Text("A newer Veil is out", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.5).sp)
+            Text(
+                "Published ${ago(u.time)}. Yours is from $yours.",
+                fontSize = 10.sp, color = Veil.Text.copy(alpha = 0.6f),
+            )
+            if (u.title.isNotBlank()) {
+                Spacer(Modifier.height(2.dp))
+                SectionLabel("WHAT'S NEW")
+                Text(u.title, fontSize = 12.sp, lineHeight = 17.sp)
+            }
+            Spacer(Modifier.height(2.dp))
+            SectionLabel("HOW TO UPDATE")
+            Text(
+                "Ask your AI agent to \"update Veil\" on the computer you installed it from. It follows the " +
+                    "Updating Veil steps in AGENT_INSTALL.md. Your settings and sign-in stay as they are.",
+                fontSize = 11.sp, lineHeight = 16.sp, color = Veil.Text.copy(alpha = 0.8f),
+            )
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Pill(
+                    onClick = { close() }, padding = PaddingValues(horizontal = 16.dp, vertical = 7.dp),
+                    modifier = Modifier.focusRequester(later),
+                ) { Text("Remind me later", fontSize = 10.sp, fontWeight = FontWeight.SemiBold) }
+                Pill(
+                    // The menu hides it once focus has moved off the row (see VeilPanel).
+                    onClick = { state.updateDialog = false; state.menuReturn = "update-hide" },
+                    padding = PaddingValues(horizontal = 16.dp, vertical = 7.dp),
+                ) { Text("Hide until the next update", fontSize = 10.sp, fontWeight = FontWeight.SemiBold) }
+            }
+            Text("Back to close", fontSize = 8.5.sp, color = Veil.Text.copy(alpha = 0.45f))
+        }
+    }
+    LaunchedEffect(Unit) { delay(120); runCatching { later.requestFocus() } }
 }
 
 /** Weather location search: the TV keyboard (with voice) opens right away; results update as you type. */

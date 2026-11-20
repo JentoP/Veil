@@ -51,5 +51,28 @@ class Tmdb(private val key: String) {
         return art
     }
 
+    private val found = ConcurrentHashMap<String, Int>()
+
+    /** TMDB id for an IMDb (or TVDB) id, via TMDB's /find. Cached; null when TMDB doesn't know it. */
+    fun find(isMovie: Boolean, imdb: String?, tvdb: Int?): Int? {
+        if (!enabled) return null
+        val (source, ext) = when {
+            imdb != null -> "imdb_id" to imdb
+            tvdb != null && !isMovie -> "tvdb_id" to tvdb.toString()
+            else -> return null
+        }
+        val cacheKey = "$isMovie:$source:$ext"
+        found[cacheKey]?.let { return it }
+        val v4 = key.startsWith("eyJ")
+        val url = "https://api.themoviedb.org/3/find/$ext?external_source=$source" + (if (v4) "" else "&api_key=$key")
+        val headers = if (v4) mapOf("Authorization" to "Bearer $key") else emptyMap()
+        val (code, text) = runCatching { Http.call("GET", url, headers) }.getOrNull() ?: return null
+        if (code != 200) return null
+        val arr = JSONObject(text).optJSONArray(if (isMovie) "movie_results" else "tv_results") ?: return null
+        val id = arr.optJSONObject(0)?.int("id") ?: return null
+        found[cacheKey] = id
+        return id
+    }
+
     companion object { private const val IMG = "https://image.tmdb.org/t/p" }
 }
