@@ -21,3 +21,11 @@ WEATHER_CITY=
 # Optional: "update available" in the Veil menu (one request a day to GitHub's public API, nothing about
 # you is sent). true by default; false turns it off. It can also be switched on the TV.
 UPDATE_CHECK=true
+
+# Optional: Play on ZEUS (Artemis installed and paired with Apollo, Wake-on-LAN enabled on ZEUS)
+ZEUS_HOST=
+ZEUS_MAC=
+ZEUS_BROADCAST=
+
+# Optional: private HTTPS URL to album.json from a Flipps TV album export
+AMBIENT_ALBUM_URL=

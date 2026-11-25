@@ -120,6 +120,11 @@ class VeilDream : DreamService(), LifecycleOwner, SavedStateRegistryOwner {
             weeklyBlocked = VeilCache.weeklyBlocked,
             seasonal = remember { ctx.getSharedPreferences("veil", MODE_PRIVATE).getBoolean("seasonal", true) },
             lyrics = remember { ctx.getSharedPreferences("veil", MODE_PRIVATE).getBoolean("lyrics_music", true) },
+            albumUrl = remember {
+                if (ctx.getSharedPreferences("veil", MODE_PRIVATE).getBoolean("personal_photos", true)) {
+                    BuildConfig.AMBIENT_ALBUM_URL
+                } else ""
+            },
             visualizer = remember {
                 ctx.getSharedPreferences("veil", MODE_PRIVATE).getString("music_style", "veil") == "viz" &&
                     dev.veil.launcher.viz.VizSettings.supported(ctx) &&

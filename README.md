@@ -133,3 +133,21 @@ See [`AGENT_INSTALL.md`](AGENT_INSTALL.md) for installing, permissions and perfo
 
 [GPL-3.0](LICENSE). You're free to use, change and share Veil. If you share a modified version, it has to
 be open source under the same license.
+
+## Play on ZEUS and personal photos
+
+- **Play on ZEUS:** install Artemis on the TV and pair it once with Apollo on ZEUS. Set
+  `ZEUS_HOST` (LAN IP recommended) and `ZEUS_MAC` (the wired adapter's MAC) in
+  `source/keys.properties`. If needed, set `ZEUS_BROADCAST` to the TV subnet's
+  broadcast address. Enable Wake-on-LAN on ZEUS. This shortcut checks Apollo's default
+  streaming port (TCP 47989), sends a wake packet if needed, and opens Artemis even if
+  the host is slow to respond. Veil pins the shortcut the first time it detects Artemis.
+  Pair the Bluetooth controller with Google TV through **Remotes & Accessories**.
+- **Personal photos:** extract a Flipps TV album ZIP into a directory on a private HTTPS
+  server that the TV can reach. Set `AMBIENT_ALBUM_URL` to its `album.json` URL.
+  Keep the album directory private on your network because it contains the stories as well
+  as photos. Use a certificate trusted by the TV. Veil caches up to 12 photos per refresh
+  so a completed slideshow works offline. Toggle **Personal photos** in the Veil menu.
+  To use it system-wide, select `VeilDream` as described in [the installation guide](AGENT_INSTALL.md).
+- Rebuild and install Veil after changing `source/keys.properties`. The same album URL
+  also opens in Flipps on Android TV.

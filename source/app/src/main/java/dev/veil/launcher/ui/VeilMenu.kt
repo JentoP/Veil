@@ -239,6 +239,15 @@ private fun VeilPanel(state: LauncherState, firstItem: FocusRequester) {
             modifier = Modifier.focusRequester(firstItem), onClick = state::startAmbient,
         )
 
+        if (dev.veil.launcher.BuildConfig.AMBIENT_ALBUM_URL.isNotBlank()) {
+            MenuButton(
+                icon = VeilIcons.Sparkle,
+                title = if (state.personalPhotos) "Personal photos: on" else "Personal photos: off",
+                subtitle = "Artwork in Veil Ambient",
+                onClick = state::togglePersonalPhotos,
+            )
+        }
+
         // Which app OK on a Continue Watching card opens (chosen once, remembered)
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionLabel("PLAY SHOWS WITH")

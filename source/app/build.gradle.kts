@@ -65,6 +65,10 @@ android {
         buildConfigField("String", "NEXTDNS_PROFILE", key("NEXTDNS_PROFILE"))
         buildConfigField("String", "NEXTDNS_API_KEY", key("NEXTDNS_API_KEY"))
         buildConfigField("String", "WEATHER_CITY", key("WEATHER_CITY"))
+        buildConfigField("String", "ZEUS_HOST", key("ZEUS_HOST"))
+        buildConfigField("String", "ZEUS_MAC", key("ZEUS_MAC"))
+        buildConfigField("String", "ZEUS_BROADCAST", key("ZEUS_BROADCAST"))
+        buildConfigField("String", "AMBIENT_ALBUM_URL", key("AMBIENT_ALBUM_URL"))
         // "Update available" in the Veil menu: one request a day to GitHub's public API. On unless
         // keys.properties has UPDATE_CHECK=false (it can also be switched off on the TV).
         buildConfigField("boolean", "UPDATE_CHECK", (keys.getProperty("UPDATE_CHECK", "true").trim() != "false").toString())

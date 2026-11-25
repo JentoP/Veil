@@ -119,6 +119,7 @@ class MainActivity : ComponentActivity() {
     private var checkFocusOnWindowFocus = true
 
     override fun onPause() {
+        state.cancelZeusLaunch()
         super.onPause()
         checkFocusOnWindowFocus = true
     }
