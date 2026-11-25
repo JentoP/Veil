@@ -61,7 +61,9 @@ object Apps {
             val icon = runCatching {
                 ri.activityInfo.applicationInfo.loadIcon(pm).toBitmap(120, 120).asImageBitmap()
             }.getOrNull()
-            AppEntry(p, ri.loadLabel(pm).toString(), banner, icon, launch).also { cache[p] = Cached(updated, locale, it) }
+            AppEntry(
+                p, if (Zeus.matches(p)) "Play on ZEUS" else ri.loadLabel(pm).toString(), banner, icon, launch,
+            ).also { cache[p] = Cached(updated, locale, it) }
         }.sortedBy { it.label.lowercase() }
         // Forget uninstalled apps.
         cache.keys.retainAll(byPkg.keys)

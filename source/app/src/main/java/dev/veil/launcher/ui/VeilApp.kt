@@ -91,6 +91,7 @@ fun VeilApp(state: LauncherState) {
             weeklyBlocked = state.dnsWeekly?.blocked,
             seasonal = state.seasonal,
             lyrics = state.lyricsMusic,
+            albumUrl = if (state.personalPhotos) dev.veil.launcher.BuildConfig.AMBIENT_ALBUM_URL else "",
         )
     }
 

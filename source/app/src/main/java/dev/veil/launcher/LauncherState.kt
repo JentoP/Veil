@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.veil.launcher.data.AppEntry
 import dev.veil.launcher.data.Apps
+import dev.veil.launcher.data.Zeus
 import dev.veil.launcher.data.BadClientId
 import dev.veil.launcher.data.ContinueWatching
 import dev.veil.launcher.data.DeviceCode
@@ -161,6 +162,14 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
         seasonal = !seasonal
         prefs.edit().putBoolean("seasonal", seasonal).apply()
     }
+    var personalPhotos by mutableStateOf(prefs.getBoolean("personal_photos", true))
+        private set
+
+    fun togglePersonalPhotos() {
+        personalPhotos = !personalPhotos
+        prefs.edit().putBoolean("personal_photos", personalPhotos).apply()
+    }
+
     private var lastWeather = 0L
     private var lastStats = 0L
 
@@ -217,6 +226,11 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
     fun refreshApps() {
         scope.launch {
             apps = withContext(Dispatchers.IO) { runCatching { Apps.load(context) }.getOrDefault(apps) }
+            val zeus = apps.firstOrNull { Zeus.matches(it.pkg) }
+            if (zeus != null && !prefs.getBoolean("zeus_initial_pin", false)) {
+                if (!isPinned(zeus)) savePins(listOf(zeus.pkg) + pins)
+                prefs.edit().putBoolean("zeus_initial_pin", true).apply()
+            }
         }
     }
 
@@ -703,7 +717,31 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
 
     // ---- Launching ----------------------------------------------------------------------------
 
-    fun launch(app: AppEntry) = start(Intent(app.launch).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    private var zeusLaunch: Job? = null
+
+    fun cancelZeusLaunch() { zeusLaunch?.cancel() }
+
+    fun launch(app: AppEntry) {
+        val intent = Intent(app.launch).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (!Zeus.matches(app.pkg)) {
+            start(intent)
+            return
+        }
+        if (zeusLaunch?.isActive == true) return
+
+        zeusLaunch = scope.launch {
+            if (!withContext(Dispatchers.IO) { Zeus.reachable() }) {
+                showToast("Waking ZEUS…")
+                val sent = withContext(Dispatchers.IO) { Zeus.wake() }
+                if (sent) {
+                    kotlinx.coroutines.withTimeoutOrNull(18_000L) {
+                        while (!withContext(Dispatchers.IO) { Zeus.reachable() }) delay(1_000L)
+                    }
+                }
+            }
+            if (!start(intent)) showToast("Couldn't open Artemis")
+        }
+    }
 
     fun openSettings() = start(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 

@@ -79,6 +79,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import dev.veil.launcher.data.NowPlaying
+import dev.veil.launcher.data.PersonalPhotos
 import dev.veil.launcher.data.WatchItem
 import dev.veil.launcher.data.Weather
 import kotlinx.coroutines.delay
@@ -102,7 +103,20 @@ fun AmbientScreen(
     seasonal: Boolean = true,
     /** Show synced lyrics in Veil music mode (when the song has them). */
     lyrics: Boolean = true,
+    albumUrl: String = "",
 ) {
+    val context = LocalContext.current.applicationContext
+    val personalPhotos by androidx.compose.runtime.produceState(emptyList<java.io.File>(), albumUrl) {
+        value = emptyList()
+        if (albumUrl.isNotBlank()) {
+            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                PersonalPhotos.cached(context, albumUrl)
+            }
+            val refreshed = PersonalPhotos.refresh(context, albumUrl)
+            // If we already started a slideshow, retain its current snapshot for this session.
+            if (value.isEmpty()) value = refreshed
+        }
+    }
     val season = if (seasonal) currentSeason() else Season.NONE
     val sunday = java.time.LocalDate.now().dayOfWeek == java.time.DayOfWeek.SUNDAY
     // "Clean screen" (visualizer only): hide all text and icons, but reveal them for 5 s when a song starts
@@ -126,6 +140,7 @@ fun AmbientScreen(
             when {
                 music && track != null && viz -> VisualizerFace(track, chromeAlpha = chrome)
                 music && track != null -> MusicFace(track, lyrics)
+                personalPhotos.isNotEmpty() -> PersonalPhotoFace(personalPhotos)
                 else -> ArtworkFace(items)
             }
         }
@@ -396,6 +411,23 @@ internal fun SongProgress(track: NowPlaying.Track, width: androidx.compose.ui.un
 private fun clock(ms: Long): String {
     val s = (ms.coerceAtLeast(0) / 1000).toInt()
     return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
+}
+
+@Composable
+private fun PersonalPhotoFace(photos: List<java.io.File>) {
+    var index by remember(photos) { mutableIntStateOf(0) }
+    LaunchedEffect(photos) {
+        while (photos.size > 1) {
+            delay(14_000)
+            index = (index + 1) % photos.size
+        }
+    }
+    Box(Modifier.fillMaxSize()) {
+        Crossfade(photos[index], animationSpec = tween(1_400), label = "personal photos") { photo ->
+            AsyncImage(photo, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+        }
+        SlideshowShade(Veil.Bg)
+    }
 }
 
 @Composable
