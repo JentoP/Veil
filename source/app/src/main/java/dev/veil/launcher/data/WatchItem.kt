@@ -6,6 +6,9 @@ data class WatchItem(
     val traktId: Int?,
     val imdb: String?,
     val tmdb: Int?,
+    val tvdb: Int? = null,
+    /** The connected service's own id for the show/movie (Simkl's number, MDBList's code), for its writes. */
+    val serviceId: String? = null,
     val season: Int = 0,
     val episode: Int = 0,
     val episodeTitle: String? = null,
@@ -16,7 +19,7 @@ data class WatchItem(
     val upNext: Boolean = false,
     /** The up-next episode aired after you last watched this show (within the last two weeks). */
     val isNew: Boolean = false,
-    /** Trakt's id for the paused-progress entry (from /sync/playback), if any. */
+    /** The service's id for the paused-progress entry (from /sync/playback), if any. */
     val playbackId: Long? = null,
     val sortTime: Long = 0L,
     /** Full-resolution backdrop for the hero (TMDB "original", decoded at screen size). */
@@ -26,7 +29,7 @@ data class WatchItem(
     val logo: String? = null,
     val poster: String? = null,
 ) {
-    val key: String get() = if (isMovie) "m:${imdb ?: title}" else "s:${traktId ?: title}"
+    val key: String get() = if (isMovie) "m:${imdb ?: tmdb ?: title}" else "s:${traktId ?: serviceId ?: tmdb ?: title}"
 
     /** "S7 E13 · Funeral (1)" or "Movie". */
     val episodeLine: String

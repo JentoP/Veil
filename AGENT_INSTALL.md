@@ -47,7 +47,7 @@ adb shell cat /proc/meminfo | head -1           # RAM
 adb shell wm size                               # screen resolution (UI is designed for 1920x1080)
 adb shell dumpsys SurfaceFlinger | grep -i "GLES"   # GPU + OpenGL ES version (visualizer needs ES 3.0)
 adb shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME
-adb shell pm list packages | grep -i -E "nuvio|spotify"
+adb shell pm list packages | grep -i -E "nuvio|stremio|spotify"
 ```
 Stop and tell the person if the TV runs older than Android 9. If OpenGL ES is below 3.0, Veil still
 works; the visualizer is simply unavailable, and music mode uses the album-art screen.
@@ -102,22 +102,37 @@ Walk them through getting each key:
 
 - **TMDB_KEY** (required, for artwork): themoviedb.org account → Settings → API → request a key
   (Developer, personal use). Use the **v3 "API Key"**, not the long read-access token.
-- **Trakt** (for *Continue watching*): **nothing to set up.** Leave `TRAKT_CLIENT_ID`,
-  `TRAKT_CLIENT_SECRET` and `TRAKT_REDIRECT_URI` empty and the build uses Veil's shared Trakt app
-  (`source/trakt.properties`; public on purpose, it has no secret). They sign in later **on the TV**
-  ("Connect Trakt" on Home shows a code for trakt.tv/activate); their account never goes into the source.
-  Continue watching opens items in **Nuvio**, which syncs to Trakt; Nuvio must be signed in to the same
-  Trakt account.
+- **Trakt, Simkl, MDBList or WeTrakr** (for *Continue watching*): **nothing to set up.** Leave the `TRAKT_*`,
+  `SIMKL_CLIENT_ID`, `MDBLIST_CLIENT_ID` and `WETRAKR_CLIENT_ID` lines empty and the build uses Veil's shared apps
+  (`source/trakt.properties`, `simkl.properties`, `mdblist.properties`, `wetrakr.properties`; public on purpose, TV sign-in apps
+  have no secret). Ask which tracker they use. They sign in later **on the TV**: "Connect a tracker" on Home
+  lets them pick Trakt, Simkl, MDBList or WeTrakr and shows a QR code and a short code for their phone. Their account
+  never goes into the source. One tracker is connected at a time.
+  Continue watching opens items in **Nuvio** or **Stremio** (picked once in the Veil menu, *Play shows
+  with*). The player must sync its progress to the same tracker account (Nuvio syncs to Trakt; check the
+  player's settings for Simkl, MDBList or WeTrakr).
   - Only if they want **their own Trakt app**: trakt.tv → Settings → Your API Apps → New application, any
     name, redirect URI `urn:ietf:wg:oauth:2.0:oob`. They can enter its Client ID on the TV (Connect Trakt →
     *Use your own Trakt app*). Veil saves it on the TV and also writes it to
     `/sdcard/Android/data/dev.veil.launcher/files/trakt.properties`. When you rebuild, copy it into
     `keys.properties` so it's built in too: `adb shell cat /sdcard/Android/data/dev.veil.launcher/files/trakt.properties`.
     Leave `TRAKT_CLIENT_SECRET` empty: new Trakt apps are PKCE-only.
-- **NEXTDNS_PROFILE / NEXTDNS_API_KEY** (optional): my.nextdns.io. The profile ID is in the setup page
-  (e.g. `abc123`), the API key at the bottom of the account page. Without them, the privacy switch uses
-  AdGuard DNS and doesn't show a blocked counter.
+- **NextDNS** (optional): **ask the person whether they want to use NextDNS** for the ad-blocking switch.
+  Explain the choice first: with NextDNS (free account at nextdns.io, their own block lists) Veil also shows
+  how many trackers were blocked today and this week. Without it, the switch uses AdGuard DNS (no account,
+  no counter). Both block system-wide only when they turn the switch on.
+  - If **yes**: fill in `NEXTDNS_PROFILE` (the ID on the my.nextdns.io setup page, e.g. `abc123`) and
+    `NEXTDNS_API_KEY` (bottom of the account page). Then tell them to set **Settings → Logs → Retention**
+    in NextDNS to **1 week or longer**. With a shorter retention NextDNS deletes the older days, so "this
+    week" always equals "today". The change only keeps data from then on, so the weekly count fills in over
+    the following days.
+  - If **no**: leave both empty.
 - **WEATHER_CITY** (optional): a city name. It can also be set later on the TV in the Veil menu.
+- **UPDATE_CHECK**: **ask the person** whether Veil may check for updates. If yes (the default), once a
+  day Veil asks GitHub's public API for the date of its latest code change and, if it's newer than their
+  build, shows a small dot on the "veil" button and an "Update available" row in the Veil menu (never a
+  popup). Nothing about them is sent; GitHub only sees an IP address. If no, set `UPDATE_CHECK=false`. It
+  can be switched later in the Veil menu.
 
 Changing keys means rebuilding (they're compiled into the app). Never commit or share `keys.properties`;
 it's already listed in `source/.gitignore`.
@@ -133,7 +148,7 @@ cd source
 Install only after `BUILD SUCCESSFUL`. On Windows, R8 sometimes locks `classes.dex`; just run the build
 again. The app is at `source/app/build/outputs/apk/release/app-release.apk`. It's signed with this
 computer's debug key, so later updates must be built on the same computer. A build from a different
-computer needs an uninstall first, which also signs them out of Trakt.
+computer needs an uninstall first, which also signs them out of their tracker.
 
 Ask, then run:
 ```sh
@@ -173,13 +188,15 @@ launcher to "fix" the flash (rule 1).
 
 Guide them through, and confirm each works:
 1. **Home** shows Veil. Press Home inside another app: it comes back to Veil.
-2. **Connect Trakt**: shows a code, they enter it at trakt.tv/activate, and Continue watching fills in.
+2. **Connect a tracker**: they pick Trakt, Simkl, MDBList or WeTrakr, scan the QR code (or enter the code on the
+   service's site), and Continue watching fills in. Then in the Veil menu, *Play shows with*: Nuvio or
+   Stremio, and press a show to check it opens the right episode.
 3. **Artwork and logos** load. If they're missing, the TMDB key is wrong.
 4. **Apps row**: Veil starts with TizenTube, Nuvio and Spotify pinned. Any of them that isn't installed is
    simply left out (the row always ends with *All apps*). Help them pin their own apps: *All apps* → hold
    OK on an app → *Pin to Home*. Pinned apps can be moved left/right the same way.
-5. **Veil menu** (the "veil" wordmark top left): theme, weather city, music mode (album art + lyrics, or
-   visualizer), visualizer settings.
+5. **Veil menu** (OK on the "veil" button top left): which app plays shows, theme, weather city, music
+   mode (album art + lyrics, or visualizer), visualizer settings.
 6. **Privacy pill**: turning it on enables encrypted DNS. Browse a bit to check sites still load. Pause/off work.
 7. **Music**: play something in Spotify or similar, then open Ambient (Veil menu → *Start Veil Ambient*, or wait
    for the screensaver). Album art and lyrics, or the visualizer, should react.
@@ -221,7 +238,31 @@ Before lite mode, or instead of it, the person can lower **Trails** and **Glow**
 
 ---
 
-## 7. If you change the code
+## 7. Updating Veil
+
+When the person asks to update Veil (the Veil menu says "Update available"), on **the same computer** that
+built it (the signing key lives there):
+
+1. **Get the new code:** `git pull` in this repo. If they changed files themselves, show them what
+   `git pull` would overwrite and ask first. If they downloaded a ZIP instead of cloning, download the new
+   ZIP and copy their `source/keys.properties` and `source/local.properties` into it.
+2. **Read what changed** (`git log --oneline` since their version) and tell them in a sentence or two.
+   If `keys.properties.example` gained new lines, ask about those keys (the old ones stay as they are).
+3. **Build:** `./gradlew assembleRelease` with their existing `keys.properties` (Windows: run again if
+   `classes.dex` is locked).
+4. **Find the TV:** the wireless-debugging port changes after a reboot, so reconnect with
+   `adb mdns services` / `adb connect <ip:port>` if needed.
+5. **Ask, then install:** `adb install -r app/build/outputs/apk/release/app-release.apk`.
+   An update keeps everything: permissions, home screen, screensaver, tracker sign-in and settings. No grants
+   need redoing. Never uninstall to "fix" an update; if it fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`,
+   see Troubleshooting and ask before uninstalling (that resets everything).
+6. **Check:** Home still opens Veil, and the dot on the "veil" button is gone.
+
+The section-0 rules still apply: don't press buttons on the TV while they use it, no force-stop.
+
+---
+
+## 8. If you change the code
 
 Rules that keep Veil smooth on weak TV GPUs:
 - **Pre-render anything full-screen.** Live full-screen gradients, `RenderEffect` blur and non-standard

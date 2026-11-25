@@ -5,6 +5,12 @@ TRAKT_CLIENT_ID=
 TRAKT_CLIENT_SECRET=
 # Only for your own Production app: the https redirect URI you registered (blank = urn:ietf:wg:oauth:2.0:oob)
 TRAKT_REDIRECT_URI=
+# Simkl / MDBList / WeTrakr: leave empty to use Veil's shared apps (simkl.properties, mdblist.properties,
+# wetrakr.properties). Only fill in to use your own: a Simkl "TV, devices & command line" app, an MDBList
+# "Device Code App", or a WeTrakr app (its client_id; never its secret).
+SIMKL_CLIENT_ID=
+MDBLIST_CLIENT_ID=
+WETRAKR_CLIENT_ID=
 # TMDB API key (v3 "API Key") for artwork
 TMDB_KEY=
 # Optional: NextDNS profile ID + API key for ad blocking via NextDNS and the blocked counter
@@ -12,3 +18,6 @@ NEXTDNS_PROFILE=
 NEXTDNS_API_KEY=
 # Optional: default weather city (can also be changed on the TV in the Veil menu)
 WEATHER_CITY=
+# Optional: "update available" in the Veil menu (one request a day to GitHub's public API, nothing about
+# you is sent). true by default; false turns it off. It can also be switched on the TV.
+UPDATE_CHECK=true

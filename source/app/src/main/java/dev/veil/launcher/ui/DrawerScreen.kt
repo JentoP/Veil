@@ -69,7 +69,7 @@ fun DrawerScreen(state: LauncherState) {
                 padding = PaddingValues(horizontal = 14.dp, vertical = 7.dp),
             ) {
                 Text(
-                    if (state.connected) "Trakt connected · Disconnect" else "Connect Trakt",
+                    if (state.connected) "${state.service.title} connected · Disconnect" else "Connect a tracker",
                     fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
                 )
             }

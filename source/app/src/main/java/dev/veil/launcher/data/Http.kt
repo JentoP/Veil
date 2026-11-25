@@ -22,7 +22,9 @@ internal object Http {
             headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
             if (body != null) {
                 c.doOutput = true
-                c.setRequestProperty("Content-Type", "application/json")
+                if (headers.keys.none { it.equals("Content-Type", ignoreCase = true) }) {
+                    c.setRequestProperty("Content-Type", "application/json")
+                }
                 c.outputStream.use { it.write(body.toByteArray()) }
             }
             val code = c.responseCode

@@ -103,8 +103,8 @@ class VeilDream : DreamService(), LifecycleOwner, SavedStateRegistryOwner {
         LaunchedEffect(Unit) {
             withContext(Dispatchers.IO) {
                 if (items.isEmpty()) {
-                    val trakt = Trakt(ctx)
-                    if (trakt.isConnected) runCatching { ContinueWatching.load(trakt, Tmdb(BuildConfig.TMDB_KEY)) }
+                    val tracker = dev.veil.launcher.data.currentTracker(ctx)
+                    if (tracker.isConnected) runCatching { ContinueWatching.withArt(tracker.continueWatching(), Tmdb(BuildConfig.TMDB_KEY)) }
                         .getOrNull()?.let { items = it; VeilCache.items = it }
                 }
                 if (weather == null) Weather(ctx).current()?.let { weather = it; VeilCache.weather = it }

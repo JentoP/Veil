@@ -29,6 +29,8 @@
             <category android:name="android.intent.category.HOME" />
         </intent>
         <package android:name="com.edde746.plezy" />
+        <package android:name="com.nuvio.tv" />
+        <package android:name="com.stremio.one" />
     </queries>
 
     <application
