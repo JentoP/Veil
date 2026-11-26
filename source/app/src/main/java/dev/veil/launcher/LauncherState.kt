@@ -752,13 +752,14 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
 
     // ---- Which app plays Continue Watching (chosen once in the Veil menu) ----
 
-    /** Apps that can open the exact episode/movie from an IMDb id. */
+    /** Apps that can open the exact episode/movie from an IMDb (or, for Plezy, TMDB) id. */
     enum class Player(val id: String, val title: String, val pkg: String) {
+        PLEZY("plezy", "Plezy", PLEZY_PKG),
         NUVIO("nuvio", "Nuvio", NUVIO_PKG),
         STREMIO("stremio", "Stremio", STREMIO_PKG),
     }
 
-    var player by mutableStateOf(Player.entries.firstOrNull { it.id == prefs.getString("player", null) } ?: Player.NUVIO)
+    var player by mutableStateOf(Player.entries.firstOrNull { it.id == prefs.getString("player", null) } ?: Player.PLEZY)
         private set
 
     fun isInstalled(p: Player): Boolean =
@@ -776,7 +777,33 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
 
     /** Opens the item in the chosen player, straight to its streams. */
     fun open(item: WatchItem) {
-        if (effectivePlayer() == Player.STREMIO) openInStremio(item) else openInNuvio(item)
+        when (effectivePlayer()) {
+            Player.PLEZY -> openInPlezy(item)
+            Player.STREMIO -> openInStremio(item)
+            Player.NUVIO -> openInNuvio(item)
+        }
+    }
+
+    /**
+     * Opens the item in Plezy, through its published `plezy://` link grammar
+     * (plezy's lib/services/deep_links/deep_link.dart, which promises parameters
+     * are only ever added, never renamed). A catalogue link names the title by one
+     * external id, so Plezy finds it on whichever of your servers has it.
+     *
+     * A show link carries no season or episode: the grammar has no room for them,
+     * so Plezy plays the episode it is on itself (`mode=next`, the default). That
+     * is your Plex server's progress, which can differ from the tracker progress
+     * this row is built from.
+     */
+    private fun openInPlezy(item: WatchItem) {
+        val i = Intent(Intent.ACTION_VIEW, plezyLink(item))
+            .setPackage(PLEZY_PKG)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (!start(i)) {
+            context.packageManager.getLeanbackLaunchIntentForPackage(PLEZY_PKG)?.let {
+                start(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        }
     }
 
     /** stremio:///detail/{type}/{imdb}/{videoId}: the episode's (or movie's) stream list. */
@@ -823,6 +850,23 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
         }
     }
 
+    /**
+     * `plezy://play?type=movie|show&tmdb=…` for [item], falling back to the IMDB id,
+     * and to `plezy://open` when Trakt gave us neither (Plezy rejects a play link
+     * with no target, so sending one would do nothing at all).
+     */
+    private fun plezyLink(item: WatchItem): Uri {
+        val play = Uri.Builder().scheme(PLEZY_SCHEME).authority("play")
+            .appendQueryParameter("type", if (item.isMovie) "movie" else "show")
+        val tmdb = item.tmdb
+        val imdb = item.imdb?.trim()?.lowercase()
+        return when {
+            tmdb != null && tmdb > 0 -> play.appendQueryParameter("tmdb", tmdb.toString()).build()
+            imdb != null && IMDB_ID.matches(imdb) -> play.appendQueryParameter("imdb", imdb).build()
+            else -> Uri.Builder().scheme(PLEZY_SCHEME).authority("open").build()
+        }
+    }
+
     private fun start(intent: Intent): Boolean = try {
         context.startActivity(intent); true
     } catch (e: ActivityNotFoundException) {
@@ -832,13 +876,25 @@ class LauncherState(private val context: Context, private val scope: CoroutineSc
     }
 
     companion object {
+        const val PLEZY = "com.edde746.plezy"
+        const val PLEZY_PKG = PLEZY
+        private const val PLEZY_SCHEME = "plezy"
+
+        /** Plezy accepts an IMDB id only in Trakt's own form: "tt" followed by digits. */
+        private val IMDB_ID = Regex("""^tt\d+$""")
+
         const val NUVIO = "com.nuvio.tv"
         const val NUVIO_PKG = NUVIO
         const val STREMIO_PKG = "com.stremio.one"
+
         val DEFAULT_PINS = listOf(
             "io.gh.reisxd.tizentube.cobalt",
-            NUVIO,
-            "com.spotify.tv.android",
+            // Plezy covers both halves: video, and the music library that feeds the now-playing
+            // pill, the lyrics face and the visualizer. Don't add YouTube Music's TV app here:
+            // it requests no FOREGROUND_SERVICE and declares no playback service, so it stops
+            // the moment it leaves the foreground and never publishes a MediaSession for
+            // NowPlaying to read.
+            PLEZY,
         )
     }
 }

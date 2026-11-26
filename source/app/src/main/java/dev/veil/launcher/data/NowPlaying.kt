@@ -17,7 +17,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import dev.veil.launcher.MediaListener
 
-/** Tracks the active media session (Spotify, Nuvio, …) for the "now playing" pill. */
+/** Tracks the active media session (Spotify, Plezy, …) for the "now playing" pill. */
 class NowPlaying(private val context: Context) {
     /** Immutable: every change creates a new Track, so Compose can skip parts that didn't change. */
     @androidx.compose.runtime.Immutable

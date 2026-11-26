@@ -8,7 +8,7 @@ import org.json.JSONObject
 import java.time.Instant
 
 /**
- * Builds the "Continue watching" row from Trakt (which Nuvio syncs to):
+ * Builds the "Continue watching" row from Trakt (which Plezy syncs to):
  *  1. Paused episodes/movies (/sync/playback), with progress.
  *  2. The next unwatched episode of recently watched shows (/shows/{id}/progress/watched).
  */
